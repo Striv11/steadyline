@@ -29,3 +29,39 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run e2e
+  platform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: platform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: platform/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+  platform-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t steadyline-care platform
+      - name: Boot the image and log in as the bootstrapped admin
+        run: |
+          docker run -d --name care -p 8787:8787 \
+            -e SESSION_SECRET=$(openssl rand -hex 32) \
+            -e ADMIN_PHONE=9999900000 -e ADMIN_PASSWORD=ci-admin-password-123 \
+            steadyline-care
+          for i in $(seq 1 30); do curl -fs localhost:8787/api/health && break; sleep 1; done
+          curl -fs -X POST localhost:8787/api/auth/login -H 'content-type: application/json' \
+            -d '{"phone":"9999900000","password":"ci-admin-password-123"}' | grep -q token
+          curl -fs localhost:8787/ | grep -q 'Steadyline Care'
+          docker logs care

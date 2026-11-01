@@ -1,0 +1,21 @@
+# One-click deploy of the care platform on Render (https://render.com/deploy).
+# Needs a paid instance for the persistent disk that holds the database.
+services:
+  - type: web
+    name: steadyline-care
+    runtime: docker
+    rootDir: platform
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_PHONE
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
