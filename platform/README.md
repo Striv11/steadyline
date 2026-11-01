@@ -16,6 +16,13 @@ Steadyline Care lets a care business take bookings, send caregivers and couriers
 - **Job lifecycle.** `requested → assigned → en_route → arrived → in_progress → completed`, plus `cancelled` and `no_show`. Each transition is checked for role, ownership and order. Patients can cancel only until the caregiver leaves. Clinic visits skip the trip. Deliveries complete on handover with the OTP. Every step is timestamped (with GPS when the phone allows) in the job timeline.
 - **Clinical safety.** Vitals use LOINC codes and are checked for plausibility. Readings in dangerous ranges (e.g. BP ≥ 180/120, glucose < 54 or > 400 mg/dL, SpO₂ < 90 %, HR > 130 or < 40) raise **critical alerts** that appear instantly for ops. An alert can only be closed with a written resolution. These thresholds flag readings for human review; they do not replace clinical judgment.
 - **Privacy and accountability.** Patients consent at sign-up. Staff see only the jobs assigned to them, with need-to-know patient details. Only the patient sees the delivery OTP. Every mutation, login, failed OTP and record view goes into an **append-only audit log**: the database itself rejects edits and deletes. Disabling a staff account cuts off access immediately.
+- **Notifications.** Patients, staff and on-call dispatchers get SMS or WhatsApp messages:
+  - **patients:** booking confirmed, who is coming, "on the way, arriving in about N min" (with the delivery code), visit completed, cancellations;
+  - **staff:** new job, job moved or cancelled;
+  - **every dispatcher and admin:** a page for each **critical** reading.
+
+  Every message goes to an outbox first (the *Messages* tab), so you can see exactly what was sent and what failed. A failed send never blocks a booking. With no provider configured, messages are recorded but not sent.
+- **Live location and ETA.** While a caregiver or courier is on the way, their phone shares its location every 30 seconds, and only then. The patient sees "Arriving in about N min", and dispatchers see staff and open jobs on the *Map* tab (OpenStreetMap).
 - **Money.** Prices are in paise. A price change applies to new bookings only. Staff record payment at completion (cash, UPI, card, insurance). The board shows the amount collected and the on-time arrival rate.
 
 ## Run it on your computer (5 minutes)
@@ -45,6 +52,7 @@ Open http://localhost:8787. The demo data includes two Pune clinics, a dispatche
 2. **Set environment variables on the host**, never in code:
    - `SESSION_SECRET`: 32+ random bytes (Render generates it).
    - `ADMIN_PHONE` and `ADMIN_PASSWORD` (12+ characters): on first start, the server creates this admin and the default service catalog.
+   - SMS/WhatsApp via Twilio: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` (a Twilio number, or `whatsapp:+…` for an approved WhatsApp sender), and `NOTIFY_CHANNEL=sms|whatsapp`. In India, commercial SMS also requires DLT registration of your sender ID and templates through your provider.
    - optional: `CORS_ORIGIN` (default: allow all), `PORT` (default 8787).
 3. **First login as admin:**
    - *Setup*: add your clinics, then adjust services and prices.
@@ -66,8 +74,8 @@ The software handles operations. These obligations are yours, and you should che
 ```sh
 npm run dev           # API on :8787 with reload
 npm run dev:web       # web app on :5173, proxying /api
-npm test              # 23 unit and API tests (in-memory SQLite)
+npm test              # 33 unit and API tests (in-memory SQLite)
 npm run e2e           # 6 browser flows (desktop and phone)
 ```
 
-Code map: `src/domain/` holds the pure rules (dispatch, lifecycle, vitals). `src/app.ts` is the HTTP API. `src/schema.sql` is the database. `web/src/` holds the role-based UI.
+Code map: `src/domain/` holds the pure rules (dispatch, lifecycle, vitals); `src/notify.ts` holds the message rules and providers. `src/app.ts` is the HTTP API. `src/schema.sql` is the database. `web/src/` holds the role-based UI.

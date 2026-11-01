@@ -21,3 +21,9 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 - Pages must be enabled in repo settings (source: GitHub Actions) before the live link works.
 
 **Next (Day 2)**: AES-GCM encrypted IndexedDB store with passphrase KDF, lock/unlock UI.
+
+## 2026-11-01: Steadyline Care P1 notifications, P2 live location (interactive session)
+
+**Changed:** Added an outbox-first notifier, so every SMS/WhatsApp is recorded before sending and failures never block requests. A log provider is the default and Twilio SMS/WhatsApp the real one. Message rules for booking, assignment, reassignment, on the way (with ETA and the delivery code), completion, cancellation and no-show, plus pages to every dispatcher and admin on critical readings. Staff phones share location only while en route (throttled to every 30 s). Patients see an ETA. Ops has a Leaflet/OSM live map (lazy-loaded) and a Messages tab.
+**Tests:** 33 unit and API tests (message rules, Twilio request format, E.164, recipient lists, ETA shrinking as the nurse approaches, provider failure isolation); 6 browser flows now also check the ETA, location sharing, the map and the outbox.
+**Next:** P3 recurring care plans.
