@@ -81,6 +81,9 @@ test('home visit: book, auto-dispatch, nurse visit with critical BP, ops resolve
   await expect(stop).toContainText('Allergies: penicillin');
   await stop.getByTestId('act-start').click();
   await expect(stop).toContainText('On the way');
+  await expect(nurse.getByTestId('sharing')).toContainText('Sharing your location');
+  await pt.reload();
+  await expect(pt.getByTestId('eta')).toContainText(/Arriving in about \d+ min/);
   await stop.getByTestId('act-arrive').click();
   await stop.getByTestId('act-begin').click();
   await expect(stop).toContainText('In progress');
@@ -102,6 +105,13 @@ test('home visit: book, auto-dispatch, nurse visit with critical BP, ops resolve
   await alert.getByTestId('ack-text').fill('Called patient, GP booked today 4pm');
   await alert.getByTestId('ack').click();
   await expect(ops.locator('#toast')).toContainText('Alert resolved');
+  await ops.getByTestId('tab-messages').click();
+  await expect(ops.getByTestId('log-mode')).toBeVisible();
+  await expect(ops.getByTestId('messages')).toContainText('is on the way');
+  await expect(ops.getByTestId('messages')).toContainText('CRITICAL');
+  await ops.getByTestId('tab-map').click();
+  await expect(ops.getByTestId('live-map')).toBeVisible();
+  await expect(ops.locator('.leaflet-container')).toBeVisible();
 
   await pt.reload();
   await expect(pt.getByTestId('bookings')).toContainText('Completed');

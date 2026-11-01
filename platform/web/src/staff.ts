@@ -34,10 +34,38 @@ export function staffView(root: HTMLElement, user: User): () => void {
   const summary = h('p', { class: 'fine' });
   const expanded = new Set<string>();
 
+  // Share location only while travelling to a patient, at most every 30 s.
+  const sharing = h('p', { class: 'fine', 'data-testid': 'sharing' });
+  let watch: number | null = null;
+  let lastSent = 0;
+  const tracking = (on: boolean) => {
+    if (on && watch === null && navigator.geolocation) {
+      watch = navigator.geolocation.watchPosition(
+        (p) => {
+          if (Date.now() - lastSent < 30_000) return;
+          lastSent = Date.now();
+          void api('POST', '/api/staff/location', {
+            lat: p.coords.latitude,
+            lng: p.coords.longitude,
+            accuracy: p.coords.accuracy,
+          }).catch(() => {});
+        },
+        () => (sharing.textContent = 'Location is off: the patient cannot see your ETA.'),
+        { enableHighAccuracy: true, maximumAge: 15_000 },
+      );
+      sharing.textContent = '📍 Sharing your location with the patient while you travel.';
+    } else if (!on && watch !== null) {
+      navigator.geolocation.clearWatch(watch);
+      watch = null;
+      sharing.textContent = '';
+    }
+  };
+
   const refresh = async () => {
     const jobs = await api<Job[]>('GET', `/api/staff/today?date=${dayInput.value}`);
     const open = jobs.filter((j) => !['completed', 'cancelled', 'no_show'].includes(j.status));
     summary.textContent = `${jobs.length} job(s), ${open.length} still to do.`;
+    tracking(jobs.some((j) => j.status === 'en_route'));
     list.replaceChildren(
       ...(jobs.length
         ? jobs.map(card)
@@ -165,11 +193,16 @@ export function staffView(root: HTMLElement, user: User): () => void {
       { class: 'page narrow' },
       h('h1', {}, 'My day'),
       h('div', { class: 'row' }, dayInput, summary),
+      sharing,
       list,
     ),
   );
   void refresh();
-  return live(() => void refresh());
+  const stopLive = live(() => void refresh());
+  return () => {
+    stopLive();
+    tracking(false);
+  };
 }
 
 const VITALS: [string, string, string, string?][] = [

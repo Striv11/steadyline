@@ -97,6 +97,13 @@ export function patientView(root: HTMLElement, user: User): () => void {
               h('a', { href: `tel:${j['staff'].phone}` }, j['staff'].phone),
             )
           : null,
+        j['eta_min'] != null
+          ? h(
+              'p',
+              { class: 'eta', 'data-testid': 'eta' },
+              `🚗 Arriving in about ${j['eta_min']} min`,
+            )
+          : null,
         j.status === 'requested'
           ? h(
               'p',
