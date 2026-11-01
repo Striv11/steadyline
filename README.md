@@ -11,6 +11,13 @@
 
 > **Not medical advice. Not a diagnostic device.** Steadyline never recommends doses or diagnoses. It helps you see your own data and prepare for conversations with your care team.
 
+## Two parts, one product
+
+|                     | What                                                                                                                                                                                                     | Where                                                                  |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Steadyline**      | A private, local-first dashboard where patients track their own condition (this page).                                                                                                                   | `src/`, live on GitHub Pages                                           |
+| **Steadyline Care** | The care operations platform: patients book home nursing, clinic visits and medicine delivery; caregivers and couriers run their day on their phones; dispatchers staff jobs and handle clinical alerts. | [`platform/`](platform/README.md), deploy with Docker or `render.yaml` |
+
 ## Problem
 
 People living with diabetes, hypertension, asthma/COPD, IBD, migraine, rheumatoid arthritis/lupus, kidney disease or heart failure generate a lot of data (meter readings, symptoms, meds, sleep) scattered across apps, paper logs and device exports. Most tracking apps want an account and upload health data to a server. Clinic visits are short, and patients struggle to show trends, adherence and the questions they meant to ask.

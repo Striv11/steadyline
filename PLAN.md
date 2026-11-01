@@ -22,3 +22,20 @@ Fourteen-day arc for Steadyline. Every milestone has acceptance criteria checkab
 ## Stretch
 
 - mmol/L display preference, multi-profile support, Health Connect JSON, FHIR `Observation` CGM export as `Observation` series.
+
+## Steadyline Care platform (`platform/`, added 2026-11-01)
+
+The owner wants a usable product for running home-care, clinic and delivery staff. Done in the interactive session:
+API (Fastify + SQLite), auto-dispatch, job lifecycle, vitals with LOINC codes and critical alerts, delivery OTP, role-based web app (patient / caregiver / courier / ops / admin), catalog and clinic admin, append-only audit, production bootstrap, Docker + Render blueprint; 23 API tests, 6 browser e2e flows (desktop and phone), and a Docker boot check in CI.
+
+Next milestones for daily sessions (one per day, each with tests; keep `platform/` CI green):
+
+| #   | Milestone            | Acceptance criteria                                                                                                                                                                          | Status |
+| --- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| P1  | Notifications        | SMS/WhatsApp provider interface with a console provider by default; booking confirmed, caregiver on the way (with ETA), delivery OTP, critical alert to on-call dispatcher; templates tested | [ ]    |
+| P2  | Live location        | Staff phones post location while en_route (throttled); the patient sees the ETA; ops sees a Leaflet/OSM map of active staff and jobs                                                         | [ ]    |
+| P3  | Recurring care plans | Weekly/daily visit series (RRULE subset) per patient, generated two weeks ahead, auto-dispatched; skip or modify one occurrence                                                              | [ ]    |
+| P4  | Payments             | Razorpay payment links (provider interface plus a fake for tests), webhook signature verification, invoices and receipts as PDF                                                              | [ ]    |
+| P5  | Dashboard link       | A patient can import visit readings from the platform into the local-first Steadyline dashboard (FHIR Bundle export endpoint); the doctor-visit report includes them                         | [ ]    |
+| P6  | Ops analytics        | Utilization per staff, revenue per service, cancellations and no-shows, response time to critical alerts; CSV export                                                                         | [ ]    |
+| P7  | Hardening            | Rate limiting on auth, password reset via OTP, session revocation, nightly backup script, Postgres option behind the same queries                                                            | [ ]    |
