@@ -1,0 +1,7 @@
+{
+  "name": "steadyline",
+  "description": "Private, local-first chronic illness dashboard on FHIR R4: glucose metrics, encrypted storage, demo patient.",
+  "language": "TypeScript",
+  "arc_days": 14,
+  "pages": true
+}
