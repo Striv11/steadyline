@@ -1,0 +1,9 @@
+.env
+*.pem
+*.key
+/dist/
+/build/
+node_modules/
+.DS_Store
+playwright-report/
+test-results/
