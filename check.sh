@@ -9,3 +9,10 @@ npx eslint .
 npx tsc --noEmit
 npx vitest run
 npx vite build
+# The care operations platform has its own toolchain.
+(
+  cd platform
+  if [ ! -d node_modules ]; then npm ci; fi
+  npm run typecheck
+  npm test
+)
