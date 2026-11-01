@@ -8,10 +8,22 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { hashPassword } from '../src/auth.js';
 import { id, openDb, type DB } from '../src/db.js';
+import { Notifier, type Provider } from '../src/notify.js';
 
 type App = ReturnType<typeof buildApp>;
 let db: DB;
 let app: App;
+let notifier: Notifier;
+let sent: { to: string; body: string }[] = [];
+let failSends = false;
+const fakeProvider: Provider = {
+  name: 'fake',
+  send: async (to, body) => {
+    if (failSends) throw new Error('provider down');
+    sent.push({ to, body });
+    return { ref: `m${sent.length}` };
+  },
+};
 const PW = 'password123';
 
 const tomorrowAt = (hhmmUtc: string) =>
@@ -85,7 +97,10 @@ function seed() {
 let S: ReturnType<typeof seed>;
 beforeEach(() => {
   db = openDb(':memory:');
-  app = buildApp({ db, secret: 'test-secret' });
+  sent = [];
+  failSends = false;
+  notifier = new Notifier(db, fakeProvider);
+  app = buildApp({ db, secret: 'test-secret', notifier });
   S = seed();
 });
 
@@ -488,5 +503,100 @@ describe('catalog administration', () => {
         })
       ).status,
     ).toBe(400);
+  });
+});
+
+describe('notifications and live location', () => {
+  const outbox = () =>
+    db
+      .prepare('SELECT template, to_phone, status, body, error FROM notifications ORDER BY rowid')
+      .all() as any[];
+
+  it('messages patient and staff through the job, with a live ETA, and pages ops on critical readings', async () => {
+    const pt = await newPatient();
+    const j = (
+      await call('POST', '/api/jobs', pt, {
+        service_id: S.services.nursing,
+        starts_at: tomorrowAt('05:00'),
+      })
+    ).body['job'];
+    await notifier.flush();
+    expect(outbox().map((n) => [n.template, n.to_phone])).toEqual([
+      ['booked', '9300000001'],
+      ['assigned', '9300000001'],
+      ['staff_assigned', '9100000001'],
+    ]);
+    expect(sent).toHaveLength(3);
+    expect(outbox().every((n) => n.status === 'sent')).toBe(true);
+
+    const nurse = await login('9100000001');
+    // Nurse starts 3 km away; the patient sees an ETA in the app and in the message.
+    await call('POST', `/api/jobs/${j.id}/actions/start`, nurse, { lat: 18.51, lng: 73.84 });
+    const view = await call('GET', `/api/jobs/${j.id}`, pt);
+    expect(view.body['eta_min']).toBeGreaterThan(10);
+    expect(view.body['eta_min']).toBeLessThan(40);
+    await notifier.flush();
+    expect(outbox().at(-1).body).toMatch(/on the way, arriving in about \d+ min/);
+
+    // Location updates move the ETA; ops sees the nurse on the live map.
+    expect(
+      (await call('POST', '/api/staff/location', nurse, { lat: 18.489, lng: 73.819 })).body[
+        'active_trips'
+      ],
+    ).toBe(1);
+    const closer = await call('GET', `/api/jobs/${j.id}`, pt);
+    expect(closer.body['eta_min']).toBeLessThan(view.body['eta_min']);
+    const ops = await login('9000000002');
+    const live = await call('GET', '/api/ops/live', ops);
+    expect(live.body['staff'].map((s: any) => s.name)).toContain('Nurse Near');
+    expect(live.body['jobs'].find((x: any) => x.id === j.id).eta_min).toBe(closer.body['eta_min']);
+    expect((await call('POST', '/api/staff/location', pt, { lat: 1, lng: 1 })).status).toBe(403);
+
+    await call('POST', `/api/jobs/${j.id}/actions/arrive`, nurse);
+    await call('POST', `/api/jobs/${j.id}/actions/begin`, nurse);
+    await call('POST', `/api/jobs/${j.id}/observations`, nurse, [{ code: 'spo2', value: 86 }]);
+    await notifier.flush();
+    const pages = outbox().filter((n) => n.template === 'critical_alert');
+    expect(pages.map((n) => n.to_phone).sort()).toEqual(['9000000001', '9000000002']);
+    expect(pages[0].body).toContain('SpO₂ 86%');
+    expect((await call('GET', '/api/ops/notifications', ops)).body).toHaveLength(outbox().length);
+  });
+
+  it('a failing provider never breaks the booking; failures are recorded', async () => {
+    failSends = true;
+    const pt = await newPatient();
+    const r = await call('POST', '/api/jobs', pt, {
+      service_id: S.services.nursing,
+      starts_at: tomorrowAt('05:00'),
+    });
+    expect(r.status).toBe(200);
+    await notifier.flush();
+    expect(outbox().every((n) => n.status === 'failed' && n.error === 'provider down')).toBe(true);
+  });
+
+  it('reassignment tells the previous nurse; cancellation tells both sides', async () => {
+    const pt = await newPatient();
+    const j = (
+      await call('POST', '/api/jobs', pt, {
+        service_id: S.services.nursing,
+        starts_at: tomorrowAt('05:00'),
+      })
+    ).body['job'];
+    const ops = await login('9000000002');
+    await call('POST', `/api/jobs/${j.id}/actions/assign`, ops, { staff_id: S.nurseFar });
+    await call('POST', `/api/jobs/${j.id}/actions/cancel`, ops, {
+      reason: 'patient admitted to hospital',
+    });
+    await notifier.flush();
+    const t = outbox()
+      .slice(3)
+      .map((n) => [n.template, n.to_phone]);
+    expect(t).toEqual([
+      ['assigned', '9300000001'],
+      ['staff_assigned', '9100000002'],
+      ['staff_unassigned', '9100000001'],
+      ['cancelled', '9300000001'],
+      ['staff_cancelled', '9100000002'],
+    ]);
   });
 });

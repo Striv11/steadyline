@@ -6,7 +6,8 @@ import { randomInt } from 'node:crypto';
 import { z, ZodError } from 'zod';
 import { hashPassword, signToken, verifyPassword, verifyToken, type Claims } from './auth.js';
 import { audit, id, now, type DB } from './db.js';
-import { rank, type Candidate, type JobRequest } from './domain/dispatch.js';
+import { rank, travelMinutes, type Candidate, type JobRequest } from './domain/dispatch.js';
+import { messagesFor, Notifier, providerFromEnv, type JobEvent } from './notify.js';
 import {
   isOpen,
   transition,
@@ -24,6 +25,8 @@ export interface AppOptions {
   corsOrigin?: string | boolean;
   /** Built web app to serve at / (optional; the API works without it). */
   publicDir?: string;
+  /** Outbound messages; defaults to the provider configured in the environment. */
+  notifier?: Notifier;
 }
 
 type Row = Record<string, unknown>;
@@ -37,7 +40,14 @@ declare module 'fastify' {
 /** In-process event bus for live updates (SSE). */
 type Listener = (event: { type: string; data: unknown }) => void;
 
-export function buildApp({ db, secret, corsOrigin = true, publicDir }: AppOptions) {
+export function buildApp({
+  db,
+  secret,
+  corsOrigin = true,
+  publicDir,
+  notifier: given,
+}: AppOptions) {
+  const notifier = given ?? new Notifier(db, providerFromEnv());
   const app = Fastify({ logger: false, bodyLimit: 1_000_000 });
   void app.register(cors, { origin: corsOrigin });
   const listeners = new Map<Listener, Claims>();
@@ -47,6 +57,45 @@ export function buildApp({ db, secret, corsOrigin = true, publicDir }: AppOption
       const ops = who.role === 'ops' || who.role === 'admin';
       if (ops || who.sub === data.patient_id || who.sub === data.staff_id) fn({ type, data });
     }
+  };
+
+  /** Staff position if reported recently enough to be useful for an ETA. */
+  const freshLocation = (staffId: unknown, maxAgeMin = 10) => {
+    if (!staffId) return null;
+    const l = db
+      .prepare('SELECT lat, lng, at FROM staff_locations WHERE staff_id = ?')
+      .get(staffId) as Row | undefined;
+    if (!l || Date.now() - Date.parse(String(l['at'])) > maxAgeMin * 60_000) return null;
+    return { lat: Number(l['lat']), lng: Number(l['lng']), at: String(l['at']) };
+  };
+  const etaFor = (j: Row) => {
+    const loc = j['status'] === 'en_route' ? freshLocation(j['staff_id']) : null;
+    if (!loc || j['lat'] == null) return null;
+    return {
+      eta_min: travelMinutes(loc, { lat: Number(j['lat']), lng: Number(j['lng']) }),
+      staff_location_at: loc.at,
+    };
+  };
+  const userBrief = (uid: unknown) =>
+    uid
+      ? ((db.prepare('SELECT id, name, phone FROM users WHERE id = ?').get(uid) as
+          Row | undefined) ?? null)
+      : null;
+
+  /** Turn a job event into messages for the patient and staff involved. */
+  const notifyJob = (event: JobEvent, jobId: string, previousStaffId?: string | null) => {
+    const j = db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as Row;
+    const svc = db.prepare('SELECT name FROM services WHERE id = ?').get(j['service_id']) as Row;
+    notifier.enqueue(
+      messagesFor(event, j, {
+        service: String(svc['name']),
+        patient: userBrief(j['patient_id'])!,
+        staff: userBrief(j['staff_id'] ?? previousStaffId),
+        previousStaff: userBrief(previousStaffId),
+        etaMin: etaFor(j)?.eta_min ?? null,
+      }),
+      { jobId },
+    );
   };
 
   app.setErrorHandler((err, _req, reply) => {
@@ -233,6 +282,7 @@ export function buildApp({ db, secret, corsOrigin = true, publicDir }: AppOption
       service,
       site,
       otp_code: isPatient ? j['otp_code'] : undefined,
+      ...(etaFor(j) ?? {}),
       staff: staff ? { name: staff['name'], phone: staff['phone'], role: staff['role'] } : null,
       patient: isPatient
         ? undefined
@@ -342,6 +392,8 @@ export function buildApp({ db, secret, corsOrigin = true, publicDir }: AppOption
     })();
     // Try to staff it straight away; it stays in the ops queue if nobody fits.
     const auto = autoAssign(jid, who.sub);
+    notifyJob('booked', jid);
+    if (auto.assigned) notifyJob('assigned', jid);
     const j = getJob(jid);
     publish('job', { ...j, patient_id: patientId });
     return { job: viewJob(j, who, true), dispatch: auto };
@@ -468,6 +520,20 @@ export function buildApp({ db, secret, corsOrigin = true, publicDir }: AppOption
         staff_id: sets['staff_id'],
       });
     })();
+    if (STAFF.includes(who.role) && b.lat !== undefined && b.lng !== undefined)
+      saveLocation(who.sub, b.lat, b.lng, null);
+    const events: Partial<Record<Action, JobEvent>> = {
+      assign: 'assigned',
+      unassign: 'unassigned',
+      start: 'start',
+      arrive: 'arrive',
+      complete: 'complete',
+      cancel: 'cancel',
+      no_show: 'no_show',
+    };
+    const ev = events[action];
+    if (ev)
+      notifyJob(ev, jobId, action === 'assign' || action === 'unassign' ? ref.staff_id : null);
     const updated = getJob(jobId);
     publish('job', {
       ...updated,
@@ -548,6 +614,23 @@ export function buildApp({ db, secret, corsOrigin = true, publicDir }: AppOption
         audit(db, who.sub, 'record_vitals', 'job', String(j['id']), readings);
       })();
       for (const f of flags) publish('alert', { ...f, patient_id: undefined, job_id: j['id'] });
+      const critical = flags.filter((f) => f['severity'] === 'critical');
+      if (critical.length) {
+        const pt = userBrief(j['patient_id'])!;
+        const onCall = db
+          .prepare("SELECT id, phone FROM users WHERE role IN ('ops','admin') AND active = 1")
+          .all() as Row[];
+        for (const f of critical)
+          notifier.enqueue(
+            onCall.map((u) => ({
+              userId: String(u['id']),
+              phone: String(u['phone']),
+              template: 'critical_alert',
+              body: `Steadyline Care CRITICAL: ${pt['name']} (${pt['phone']}): ${f['message']}. Open Alerts on the ops board.`,
+            })),
+            { jobId: String(j['id']), alertId: String(f['id']) },
+          );
+      }
       return { observations: created, alerts: flags };
     },
   );
@@ -658,6 +741,7 @@ export function buildApp({ db, secret, corsOrigin = true, publicDir }: AppOption
   app.post('/api/jobs/:id/auto-assign', { preHandler: roles('ops', 'admin') }, async (req) => {
     const jid = (req.params as Row)['id'] as string;
     const r = autoAssign(jid, req.user!.sub);
+    if (r.assigned) notifyJob('assigned', jid);
     const j = getJob(jid);
     publish('job', {
       ...j,
@@ -857,6 +941,72 @@ export function buildApp({ db, secret, corsOrigin = true, publicDir }: AppOption
         .prepare('SELECT * FROM alerts WHERE patient_id = ? ORDER BY created_at DESC')
         .all(pid),
     };
+  });
+
+  // ---------- live location ----------
+  function saveLocation(staffId: string, lat: number, lng: number, accuracy: number | null) {
+    db.prepare(
+      `INSERT INTO staff_locations (staff_id, lat, lng, accuracy, at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(staff_id) DO UPDATE SET lat = excluded.lat, lng = excluded.lng, accuracy = excluded.accuracy, at = excluded.at`,
+    ).run(staffId, lat, lng, accuracy, now());
+  }
+
+  app.post('/api/staff/location', { preHandler: roles('caregiver', 'courier') }, async (req) => {
+    const b = z
+      .object({
+        lat: z.number().min(-90).max(90),
+        lng: z.number().min(-180).max(180),
+        accuracy: z.number().min(0).max(100_000).optional(),
+      })
+      .parse(req.body);
+    saveLocation(req.user!.sub, b.lat, b.lng, b.accuracy ?? null);
+    // Patients of this staff member's active trips get a fresh ETA.
+    const trips = db
+      .prepare("SELECT * FROM jobs WHERE staff_id = ? AND status = 'en_route'")
+      .all(req.user!.sub) as Row[];
+    for (const t of trips)
+      publish('job', { ...t, patient_id: String(t['patient_id']), staff_id: req.user!.sub });
+    publish('location', { id: req.user!.sub, status: 'moved' });
+    return { ok: true, active_trips: trips.length };
+  });
+
+  app.get('/api/ops/live', { preHandler: roles('ops', 'admin') }, async () => {
+    const staff = db
+      .prepare(
+        `SELECT u.id, u.name, u.role, u.phone, l.lat, l.lng, l.at FROM staff_locations l JOIN users u ON u.id = l.staff_id
+          WHERE u.active = 1 AND l.at > ? ORDER BY u.name`,
+      )
+      .all(new Date(Date.now() - 30 * 60_000).toISOString()) as Row[];
+    const jobs = (
+      db
+        .prepare(
+          "SELECT * FROM jobs WHERE status IN ('assigned','en_route','arrived','in_progress') AND lat IS NOT NULL AND substr(starts_at,1,10) <= ? ORDER BY starts_at",
+        )
+        .all(new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)) as Row[]
+    ).map((j) => ({
+      id: j['id'],
+      status: j['status'],
+      kind: j['kind'],
+      lat: j['lat'],
+      lng: j['lng'],
+      starts_at: j['starts_at'],
+      address: j['address'],
+      staff_id: j['staff_id'],
+      patient: (userBrief(j['patient_id']) ?? {})['name'],
+      ...(etaFor(j) ?? {}),
+    }));
+    return { staff, jobs };
+  });
+
+  app.get('/api/ops/notifications', { preHandler: roles('ops', 'admin') }, async (req) => {
+    const q = z
+      .object({ limit: z.coerce.number().int().min(1).max(500).default(200) })
+      .parse(req.query);
+    return db
+      .prepare(
+        'SELECT n.*, u.name AS user_name FROM notifications n LEFT JOIN users u ON u.id = n.user_id ORDER BY n.created_at DESC, n.rowid DESC LIMIT ?',
+      )
+      .all(q.limit);
   });
 
   // ---------- catalog administration ----------

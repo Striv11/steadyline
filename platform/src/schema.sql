@@ -142,3 +142,28 @@ CREATE TABLE IF NOT EXISTS audit (            -- append-only record of every mut
 );
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
+
+CREATE TABLE IF NOT EXISTS notifications (    -- outbox: every message, sent or not
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT REFERENCES users(id),
+  to_phone     TEXT NOT NULL,
+  template     TEXT NOT NULL,
+  body         TEXT NOT NULL,
+  job_id       TEXT REFERENCES jobs(id),
+  alert_id     TEXT REFERENCES alerts(id),
+  status       TEXT NOT NULL CHECK (status IN ('queued','sent','logged','failed')),
+  provider     TEXT NOT NULL,
+  provider_ref TEXT,
+  error        TEXT,
+  created_at   TEXT NOT NULL,
+  sent_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS ntf_created ON notifications(created_at);
+
+CREATE TABLE IF NOT EXISTS staff_locations (  -- latest known position per staff member
+  staff_id TEXT PRIMARY KEY REFERENCES users(id),
+  lat      REAL NOT NULL,
+  lng      REAL NOT NULL,
+  accuracy REAL,
+  at       TEXT NOT NULL
+);
