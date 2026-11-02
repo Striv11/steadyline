@@ -24,3 +24,14 @@ const app = buildApp({
 });
 const port = Number(process.env['PORT'] ?? 8787);
 app.listen({ port, host: '0.0.0.0' }).then(() => console.log(`care-server listening on :${port}`));
+// Keep each care plan staffed two weeks ahead.
+const generate = () => {
+  try {
+    const n = app.generatePlans();
+    if (n) console.log(`care plans: created ${n} visits`);
+  } catch (e) {
+    console.error('care plan generation failed', e);
+  }
+};
+setTimeout(generate, 5_000).unref();
+setInterval(generate, 60 * 60_000).unref();

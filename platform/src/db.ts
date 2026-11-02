@@ -21,6 +21,15 @@ export function openDb(file = process.env['DB_FILE'] ?? 'care.db'): DB {
     }
   });
   db.exec(readFileSync(schemaFile!, 'utf8'));
+  // Columns added after the first release (CREATE IF NOT EXISTS cannot add them).
+  const jobCols = (db.prepare('PRAGMA table_info(jobs)').all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  if (!jobCols.includes('plan_id')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN plan_id TEXT REFERENCES care_plans(id)');
+    db.exec('ALTER TABLE jobs ADD COLUMN plan_date TEXT');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS jobs_plan ON jobs(plan_id, plan_date)');
   return db;
 }
 

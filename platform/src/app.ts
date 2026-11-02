@@ -17,6 +17,7 @@ import {
   type JobStatus,
   type Role,
 } from './domain/jobs.js';
+import { localDate, localToUtc, occurrences, parseRule, RuleError } from './domain/recurrence.js';
 import { assess, validateReading, VITALS, type VitalCode } from './domain/vitals.js';
 
 export interface AppOptions {
@@ -322,11 +323,14 @@ export function buildApp({
     patient_id: z.string().optional(), // ops booking on behalf of a patient (phone bookings)
   });
 
-  app.post('/api/jobs', { preHandler: roles('patient', 'ops', 'admin') }, async (req) => {
-    const b = JobInput.parse(req.body);
-    const who = req.user!;
-    const patientId = who.role === 'patient' ? who.sub : b.patient_id;
-    if (!patientId) throw httpError(400, 'patient_id is required when booking for someone');
+  type JobIn = z.infer<typeof JobInput>;
+  /** Validate, insert, auto-dispatch and notify. Shared by bookings and care-plan generation. */
+  const createJob = (
+    b: Omit<JobIn, 'patient_id'>,
+    patientId: string,
+    actor: string,
+    plan?: { id: string; date: string },
+  ) => {
     const svc = db
       .prepare('SELECT * FROM services WHERE id = ? AND active = 1')
       .get(b.service_id) as Row | undefined;
@@ -359,8 +363,8 @@ export function buildApp({
     const otp = kind === 'delivery' ? String(randomInt(0, 1_000_000)).padStart(6, '0') : null;
     db.transaction(() => {
       db.prepare(
-        `INSERT INTO jobs (id, patient_id, service_id, kind, status, starts_at, ends_at, address, lat, lng, site_id, notes, items, otp_code, price_paise, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO jobs (id, patient_id, service_id, kind, status, starts_at, ends_at, address, lat, lng, site_id, notes, items, otp_code, price_paise, created_at, updated_at, plan_id, plan_date)
+         VALUES (?, ?, ?, ?, 'requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         jid,
         patientId,
@@ -378,25 +382,37 @@ export function buildApp({
         svc['price_paise'],
         t,
         t,
+        plan?.id ?? null,
+        plan?.date ?? null,
       );
       db.prepare('INSERT INTO job_events (job_id, status, by_user, at) VALUES (?, ?, ?, ?)').run(
         jid,
         'requested',
-        who.sub,
+        actor,
         t,
       );
-      audit(db, who.sub, 'create', 'job', jid, {
+      audit(db, actor, 'create', 'job', jid, {
         service: svc['id'],
         starts_at: start.toISOString(),
+        ...(plan ? { plan: plan.id, plan_date: plan.date } : {}),
       });
     })();
     // Try to staff it straight away; it stays in the ops queue if nobody fits.
-    const auto = autoAssign(jid, who.sub);
+    const auto = autoAssign(jid, actor);
     notifyJob('booked', jid);
     if (auto.assigned) notifyJob('assigned', jid);
     const j = getJob(jid);
     publish('job', { ...j, patient_id: patientId });
-    return { job: viewJob(j, who, true), dispatch: auto };
+    return { jid, job: j, dispatch: auto };
+  };
+
+  app.post('/api/jobs', { preHandler: roles('patient', 'ops', 'admin') }, async (req) => {
+    const b = JobInput.parse(req.body);
+    const who = req.user!;
+    const patientId = who.role === 'patient' ? who.sub : b.patient_id;
+    if (!patientId) throw httpError(400, 'patient_id is required when booking for someone');
+    const { job, dispatch } = createJob(b, patientId, who.sub);
+    return { job: viewJob(job, who, true), dispatch };
   });
 
   app.get('/api/jobs', { preHandler: anyone }, async (req) => {
@@ -734,6 +750,290 @@ export function buildApp({
     })();
     return { assigned: best };
   }
+
+  // ---------- recurring care plans ----------
+  const HORIZON_DAYS = 14;
+  const addDays = (date: string, n: number) =>
+    new Date(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+  const OPEN_FOR_CHANGE = ['requested', 'assigned'];
+
+  const getPlan = (planId: string, who: Claims) => {
+    const p = db.prepare('SELECT * FROM care_plans WHERE id = ?').get(planId) as Row | undefined;
+    if (!p || (who.role === 'patient' && p['patient_id'] !== who.sub))
+      throw httpError(404, 'care plan not found');
+    return p;
+  };
+  const exceptionFor = (planId: string, date: string) =>
+    db.prepare('SELECT * FROM plan_exceptions WHERE plan_id = ? AND date = ?').get(planId, date) as
+      Row | undefined;
+  /** When an occurrence happens once exceptions are applied; null if skipped. */
+  const slotFor = (p: Row, date: string) => {
+    const ex = exceptionFor(String(p['id']), date);
+    if (ex?.['action'] === 'skip') return null;
+    return {
+      starts: localToUtc(
+        String(ex?.['new_date'] ?? date),
+        String(ex?.['time_of_day'] ?? p['time_of_day']),
+        Number(p['tz_offset_min']),
+      ),
+      notes: String(ex?.['notes'] ?? p['notes']),
+    };
+  };
+  const planRule = (p: Row) => parseRule(String(p['rule']), String(p['start_date']));
+  const planDates = (p: Row, from: string, to: string) =>
+    occurrences(planRule(p), String(p['start_date']), from, to);
+
+  /** Create jobs for the next two weeks of one plan; occurrences that already have a job are left alone. */
+  const generatePlan = (p: Row, actor: string) => {
+    const created: string[] = [];
+    const failed: { date: string; reason: string }[] = [];
+    const today = localDate(new Date(), Number(p['tz_offset_min']));
+    for (const date of planDates(p, today, addDays(today, HORIZON_DAYS))) {
+      const slot = slotFor(p, date);
+      if (!slot || slot.starts.getTime() < Date.now()) continue;
+      if (db.prepare('SELECT 1 FROM jobs WHERE plan_id = ? AND plan_date = ?').get(p['id'], date))
+        continue;
+      try {
+        const r = createJob(
+          {
+            service_id: String(p['service_id']),
+            starts_at: slot.starts.toISOString(),
+            notes: slot.notes,
+            site_id: (p['site_id'] as string) ?? undefined,
+            items: [],
+          },
+          String(p['patient_id']),
+          actor,
+          { id: String(p['id']), date },
+        );
+        created.push(r.jid);
+      } catch (e) {
+        const reason = (e as Error).message;
+        failed.push({ date, reason });
+        audit(db, actor, 'plan_generate_failed', 'care_plan', String(p['id']), { date, reason });
+      }
+    }
+    return { created, failed };
+  };
+  const generateAll = (actor = 'system') => {
+    let created = 0;
+    for (const p of db.prepare('SELECT * FROM care_plans WHERE active = 1').all() as Row[])
+      created += generatePlan(p, actor).created.length;
+    return created;
+  };
+  app.decorate('generatePlans', generateAll);
+
+  /** Cancel a generated job that has not started yet. */
+  const cancelPlanJob = (j: Row, actor: string, reason: string) => {
+    const t = now();
+    db.transaction(() => {
+      db.prepare(
+        "UPDATE jobs SET status = 'cancelled', cancel_reason = ?, updated_at = ? WHERE id = ?",
+      ).run(reason, t, j['id']);
+      db.prepare(
+        'INSERT INTO job_events (job_id, status, by_user, at, note) VALUES (?, ?, ?, ?, ?)',
+      ).run(j['id'], 'cancelled', actor, t, reason);
+      audit(db, actor, 'cancel', 'job', String(j['id']), { reason });
+    })();
+    notifyJob('cancel', String(j['id']), j['staff_id'] as string | null);
+    publish('job', {
+      ...getJob(String(j['id'])),
+      patient_id: String(j['patient_id']),
+      staff_id: (j['staff_id'] as string) ?? null,
+    });
+  };
+
+  const PlanInput = z.object({
+    service_id: z.string(),
+    site_id: z.string().optional(),
+    rule: z.string().min(1).max(200),
+    start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    time_of_day: z.string().regex(/^\d{2}:\d{2}$/),
+    tz_offset_min: z.number().int().min(-720).max(840).default(330),
+    notes: z.string().max(1000).default(''),
+    patient_id: z.string().optional(),
+  });
+  const planView = (p: Row) => {
+    const today = localDate(new Date(), Number(p['tz_offset_min']));
+    const upcoming = p['active']
+      ? planDates(p, today, addDays(today, 60))
+          .slice(0, 8)
+          .map((date) => {
+            const slot = slotFor(p, date);
+            const job = db
+              .prepare(
+                'SELECT id, status, starts_at, staff_id FROM jobs WHERE plan_id = ? AND plan_date = ?',
+              )
+              .get(p['id'], date) as Row | undefined;
+            return {
+              date,
+              skipped: !slot,
+              starts_at: slot?.starts.toISOString() ?? null,
+              modified: exceptionFor(String(p['id']), date)?.['action'] === 'modify',
+              job: job ?? null,
+            };
+          })
+      : [];
+    const svc = db.prepare('SELECT name FROM services WHERE id = ?').get(p['service_id']) as Row;
+    return { ...p, active: !!p['active'], service_name: svc['name'], upcoming };
+  };
+
+  app.post('/api/care-plans', { preHandler: roles('patient', 'ops', 'admin') }, async (req) => {
+    const b = PlanInput.parse(req.body);
+    const who = req.user!;
+    const patientId = who.role === 'patient' ? who.sub : b.patient_id;
+    if (!patientId) throw httpError(400, 'patient_id is required when booking for someone');
+    const svc = db
+      .prepare('SELECT kind FROM services WHERE id = ? AND active = 1')
+      .get(b.service_id) as Row | undefined;
+    if (!svc) throw httpError(400, 'unknown service');
+    if (svc['kind'] === 'delivery')
+      throw httpError(400, 'deliveries need a code each time; book them one by one');
+    try {
+      localToUtc(b.start_date, b.time_of_day, b.tz_offset_min);
+      const rule = parseRule(b.rule, b.start_date);
+      if (!occurrences(rule, b.start_date, b.start_date, addDays(b.start_date, 400)).length)
+        throw new RuleError('the rule never produces a visit');
+    } catch (e) {
+      if (e instanceof RuleError) throw httpError(400, e.message);
+      throw e;
+    }
+    readProfile(patientId); // 404 if not a patient
+    const pid = id('plan');
+    db.transaction(() => {
+      db.prepare(
+        `INSERT INTO care_plans (id, patient_id, service_id, site_id, rule, start_date, time_of_day, tz_offset_min, notes, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        pid,
+        patientId,
+        b.service_id,
+        b.site_id ?? null,
+        b.rule
+          .trim()
+          .replace(/^RRULE:/i, '')
+          .toUpperCase(),
+        b.start_date,
+        b.time_of_day,
+        b.tz_offset_min,
+        b.notes,
+        who.sub,
+        now(),
+      );
+      audit(db, who.sub, 'create', 'care_plan', pid, { rule: b.rule, service: b.service_id });
+    })();
+    const plan = db.prepare('SELECT * FROM care_plans WHERE id = ?').get(pid) as Row;
+    const generated = generatePlan(plan, who.sub);
+    return { plan: planView(plan), generated };
+  });
+
+  app.get('/api/care-plans', { preHandler: roles('patient', 'ops', 'admin') }, async (req) => {
+    const who = req.user!;
+    const rows = (
+      who.role === 'patient'
+        ? db
+            .prepare('SELECT * FROM care_plans WHERE patient_id = ? ORDER BY created_at DESC')
+            .all(who.sub)
+        : db.prepare('SELECT * FROM care_plans ORDER BY created_at DESC LIMIT 200').all()
+    ) as Row[];
+    return rows.map(planView);
+  });
+
+  app.post(
+    '/api/care-plans/:id/occurrences/:date',
+    { preHandler: roles('patient', 'ops', 'admin') },
+    async (req) => {
+      const { id: planId, date } = req.params as { id: string; date: string };
+      const b = z
+        .object({
+          action: z.enum(['skip', 'modify', 'restore']),
+          time_of_day: z
+            .string()
+            .regex(/^\d{2}:\d{2}$/)
+            .optional(),
+          new_date: z
+            .string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/)
+            .optional(),
+          notes: z.string().max(1000).optional(),
+        })
+        .parse(req.body);
+      const who = req.user!;
+      const p = getPlan(planId, who);
+      if (!p['active']) throw httpError(409, 'this care plan has ended');
+      if (!planDates(p, date, date).length) throw httpError(404, 'no visit on that date');
+      if (b.action === 'modify' && !b.time_of_day && !b.new_date && b.notes === undefined)
+        throw httpError(400, 'say what to change: time_of_day, new_date or notes');
+      if (b.time_of_day || b.new_date) {
+        try {
+          localToUtc(b.new_date ?? date, b.time_of_day ?? '00:00', 0);
+          if (b.new_date) localToUtc(b.new_date, '00:00', 0);
+        } catch {
+          throw httpError(400, 'invalid date or time');
+        }
+      }
+      const job = db
+        .prepare('SELECT * FROM jobs WHERE plan_id = ? AND plan_date = ?')
+        .get(planId, date) as Row | undefined;
+      if (job && ![...OPEN_FOR_CHANGE, 'cancelled'].includes(String(job['status'])))
+        throw httpError(409, `that visit is already ${String(job['status'])}`);
+
+      db.transaction(() => {
+        if (b.action === 'restore')
+          db.prepare('DELETE FROM plan_exceptions WHERE plan_id = ? AND date = ?').run(
+            planId,
+            date,
+          );
+        else
+          db.prepare(
+            `INSERT INTO plan_exceptions (plan_id, date, action, time_of_day, new_date, notes) VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(plan_id, date) DO UPDATE SET action = excluded.action, time_of_day = excluded.time_of_day, new_date = excluded.new_date, notes = excluded.notes`,
+          ).run(
+            planId,
+            date,
+            b.action,
+            b.action === 'modify' ? (b.time_of_day ?? null) : null,
+            b.action === 'modify' ? (b.new_date ?? null) : null,
+            b.action === 'modify' ? (b.notes ?? null) : null,
+          );
+        audit(db, who.sub, `plan_${b.action}`, 'care_plan', planId, { date, ...b });
+      })();
+
+      if (job && b.action === 'skip') {
+        if (job['status'] !== 'cancelled') cancelPlanJob(job, who.sub, 'skipped from care plan');
+      } else if (job) {
+        // Moved or restored: cancel the generated visit and book the new slot, so dispatch and
+        // notifications run exactly as for a fresh booking. The same (plan, date) key is reused.
+        if (job['status'] !== 'cancelled')
+          cancelPlanJob(job, who.sub, 'rescheduled from care plan');
+        db.prepare('UPDATE jobs SET plan_date = ? WHERE id = ?').run(`${date}#old`, job['id']);
+        generatePlan(p, who.sub);
+      } else if (b.action !== 'skip') generatePlan(p, who.sub);
+      return planView(db.prepare('SELECT * FROM care_plans WHERE id = ?').get(planId) as Row);
+    },
+  );
+
+  app.post(
+    '/api/care-plans/:id/end',
+    { preHandler: roles('patient', 'ops', 'admin') },
+    async (req) => {
+      const who = req.user!;
+      const p = getPlan((req.params as Row)['id'] as string, who);
+      db.prepare('UPDATE care_plans SET active = 0 WHERE id = ?').run(p['id']);
+      audit(db, who.sub, 'end', 'care_plan', String(p['id']));
+      const open = db
+        .prepare(
+          `SELECT * FROM jobs WHERE plan_id = ? AND status IN ('requested','assigned') AND starts_at > ?`,
+        )
+        .all(p['id'], now()) as Row[];
+      for (const j of open) cancelPlanJob(j, who.sub, 'care plan ended');
+      return { ...planView({ ...p, active: 0 }), cancelled_jobs: open.length };
+    },
+  );
+
+  app.post('/api/ops/care-plans/generate', { preHandler: roles('ops', 'admin') }, async (req) => ({
+    created: generateAll(req.user!.sub),
+  }));
 
   app.get('/api/jobs/:id/candidates', { preHandler: roles('ops', 'admin') }, async (req) =>
     candidatesFor((req.params as Row)['id'] as string),
@@ -1151,7 +1451,7 @@ export function buildApp({
   }
 
   void isOpen;
-  return app;
+  return app as typeof app & { generatePlans: typeof generateAll };
 }
 
 function onTimeRate(db: DB): number | null {

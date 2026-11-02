@@ -600,3 +600,201 @@ describe('notifications and live location', () => {
     ]);
   });
 });
+
+describe('recurring care plans', () => {
+  const localDay = (offsetDays: number) =>
+    new Date(Date.now() + 330 * 60_000 + offsetDays * 86_400_000).toISOString().slice(0, 10);
+  const planBody = (extra: Record<string, unknown> = {}) => ({
+    service_id: S.services.nursing,
+    rule: 'FREQ=DAILY',
+    start_date: localDay(1),
+    time_of_day: '09:00',
+    ...extra,
+  });
+  const jobsOf = (planId: string) =>
+    db.prepare('SELECT * FROM jobs WHERE plan_id = ? ORDER BY plan_date').all(planId) as Record<
+      string,
+      any
+    >[];
+
+  it('generates two weeks of visits, dispatches the first, and is idempotent', async () => {
+    const patient = await newPatient();
+    const r = await call('POST', '/api/care-plans', patient, planBody());
+    expect(r.status).toBe(200);
+    const planId = r.body['plan']['id'] as string;
+    expect(r.body['generated']['created']).toHaveLength(14);
+
+    const jobs = jobsOf(planId);
+    expect(jobs).toHaveLength(14);
+    expect(jobs[0]!['plan_date']).toBe(localDay(1));
+    expect(jobs[0]!['starts_at']).toBe(`${localDay(1)}T03:30:00.000Z`); // 09:00 IST
+    expect(jobs[0]!['status']).toBe('assigned'); // staff only have shifts tomorrow
+    expect(jobs[1]!['status']).toBe('requested'); // waits in the ops queue
+
+    const again = await call('POST', '/api/ops/care-plans/generate', await login('9000000002'));
+    expect(again.body['created']).toBe(0);
+    expect(jobsOf(planId)).toHaveLength(14);
+
+    const list = await call('GET', '/api/care-plans', patient);
+    expect(list.body).toHaveLength(1);
+    expect(list.body[0]['upcoming'][0]['date']).toBe(localDay(1));
+    expect(list.body[0]['upcoming'][0]['job']['status']).toBe('assigned');
+  });
+
+  it('weekly plans only book the chosen weekdays', async () => {
+    const patient = await newPatient();
+    const r = await call(
+      'POST',
+      '/api/care-plans',
+      patient,
+      planBody({ rule: 'FREQ=WEEKLY;BYDAY=MO,TH', start_date: localDay(0) }),
+    );
+    const dates = jobsOf(r.body['plan']['id']).map((j) => j['plan_date'] as string);
+    expect(dates.length).toBeGreaterThanOrEqual(4);
+    expect(dates.length).toBeLessThanOrEqual(5);
+    for (const d of dates) expect([1, 4]).toContain(new Date(`${d}T00:00:00Z`).getUTCDay());
+  });
+
+  it('skips one occurrence without disturbing the rest, and can restore it', async () => {
+    const patient = await newPatient();
+    const planId = (await call('POST', '/api/care-plans', patient, planBody())).body['plan']['id'];
+    const day = localDay(1);
+    const skip = await call('POST', `/api/care-plans/${planId}/occurrences/${day}`, patient, {
+      action: 'skip',
+    });
+    expect(skip.status).toBe(200);
+    expect(skip.body['upcoming'][0]['skipped']).toBe(true);
+    const first = jobsOf(planId)[0]!;
+    expect(first['status']).toBe('cancelled');
+    expect(first['cancel_reason']).toBe('skipped from care plan');
+    expect(jobsOf(planId).filter((j) => j['status'] !== 'cancelled')).toHaveLength(13);
+    // The patient and the assigned nurse were told.
+    const told = db
+      .prepare("SELECT template FROM notifications WHERE job_id = ? AND template LIKE '%cancel%'")
+      .all(first['id']);
+    expect(told.length).toBeGreaterThanOrEqual(1);
+
+    // Generation never resurrects a skipped visit.
+    await call('POST', '/api/ops/care-plans/generate', await login('9000000002'));
+    expect(jobsOf(planId).filter((j) => j['plan_date'] === day)).toHaveLength(1);
+
+    const back = await call('POST', `/api/care-plans/${planId}/occurrences/${day}`, patient, {
+      action: 'restore',
+    });
+    expect(back.status).toBe(200);
+    const live = jobsOf(planId).filter(
+      (j) => j['plan_date'] === day && j['status'] !== 'cancelled',
+    );
+    expect(live).toHaveLength(1);
+    expect(live[0]!['status']).toBe('assigned');
+  });
+
+  it('modifies one occurrence: new time, rebooked and re-dispatched', async () => {
+    const patient = await newPatient();
+    const planId = (await call('POST', '/api/care-plans', patient, planBody())).body['plan']['id'];
+    const day = localDay(1);
+    const r = await call('POST', `/api/care-plans/${planId}/occurrences/${day}`, patient, {
+      action: 'modify',
+      time_of_day: '11:30',
+      notes: 'please call at the gate',
+    });
+    expect(r.status).toBe(200);
+    expect(r.body['upcoming'][0]['modified']).toBe(true);
+    expect(r.body['upcoming'][0]['starts_at']).toBe(`${day}T06:00:00.000Z`);
+    const live = jobsOf(planId).filter((j) => j['status'] !== 'cancelled');
+    expect(live).toHaveLength(14);
+    const moved = live.find((j) => j['plan_date'] === day)!;
+    expect(moved['starts_at']).toBe(`${day}T06:00:00.000Z`);
+    expect(moved['notes']).toBe('please call at the gate');
+    expect(moved['status']).toBe('assigned');
+    // Other days keep the plan's usual time and notes.
+    expect(live[1]!['starts_at'].slice(11, 16)).toBe('03:30');
+  });
+
+  it('refuses to change a visit that has already started', async () => {
+    const patient = await newPatient();
+    const planId = (await call('POST', '/api/care-plans', patient, planBody())).body['plan']['id'];
+    db.prepare("UPDATE jobs SET status = 'en_route' WHERE plan_id = ? AND plan_date = ?").run(
+      planId,
+      localDay(1),
+    );
+    const r = await call('POST', `/api/care-plans/${planId}/occurrences/${localDay(1)}`, patient, {
+      action: 'skip',
+    });
+    expect(r.status).toBe(409);
+  });
+
+  it('rejects dates that are not part of the plan', async () => {
+    const patient = await newPatient();
+    const planId = (
+      await call('POST', '/api/care-plans', patient, planBody({ rule: 'FREQ=WEEKLY' }))
+    ).body['plan']['id'];
+    const off = localDay(2);
+    const r = await call('POST', `/api/care-plans/${planId}/occurrences/${off}`, patient, {
+      action: 'skip',
+    });
+    expect(r.status).toBe(404);
+  });
+
+  it('ending a plan cancels its upcoming visits and stops generation', async () => {
+    const patient = await newPatient();
+    const planId = (await call('POST', '/api/care-plans', patient, planBody())).body['plan']['id'];
+    const r = await call('POST', `/api/care-plans/${planId}/end`, patient);
+    expect(r.status).toBe(200);
+    expect(r.body['cancelled_jobs']).toBe(14);
+    expect(jobsOf(planId).every((j) => j['status'] === 'cancelled')).toBe(true);
+    await call('POST', '/api/ops/care-plans/generate', await login('9000000002'));
+    expect(jobsOf(planId)).toHaveLength(14);
+  });
+
+  it('validates the rule and the service, and enforces ownership', async () => {
+    const patient = await newPatient();
+    const bad = await call('POST', '/api/care-plans', patient, planBody({ rule: 'FREQ=YEARLY' }));
+    expect(bad.status).toBe(400);
+    const del = await call(
+      'POST',
+      '/api/care-plans',
+      patient,
+      planBody({ service_id: S.services.delivery }),
+    );
+    expect(del.status).toBe(400);
+    const planId = (await call('POST', '/api/care-plans', patient, planBody())).body['plan']['id'];
+
+    const other = await call('POST', '/api/auth/register', undefined, {
+      name: 'Other',
+      phone: '9300000002',
+      password: PW,
+      consent: true,
+    });
+    const stranger = other.body['token'] as string;
+    expect((await call('POST', `/api/care-plans/${planId}/end`, stranger)).status).toBe(404);
+    expect((await call('GET', '/api/care-plans', stranger)).body).toHaveLength(0);
+    expect((await call('GET', '/api/care-plans', await login('9100000001'))).status).toBe(403);
+  });
+
+  it('ops can set up a plan for a patient by phone', async () => {
+    const patient = await newPatient();
+    const me = await call('GET', '/api/me', patient);
+    const r = await call(
+      'POST',
+      '/api/care-plans',
+      await login('9000000002'),
+      planBody({ patient_id: me.body['id'] ?? me.body['user']?.['id'] }),
+    );
+    expect(r.status).toBe(200);
+    expect((await call('GET', '/api/care-plans', patient)).body).toHaveLength(1);
+  });
+
+  it('a patient without an address gets a clear failure, recorded per date', async () => {
+    const r = await call('POST', '/api/auth/register', undefined, {
+      name: 'NoAddr',
+      phone: '9300000003',
+      password: PW,
+      consent: true,
+    });
+    const res = await call('POST', '/api/care-plans', r.body['token'], planBody());
+    expect(res.status).toBe(200);
+    expect(res.body['generated']['created']).toHaveLength(0);
+    expect(res.body['generated']['failed'][0]['reason']).toMatch(/address/);
+  });
+});

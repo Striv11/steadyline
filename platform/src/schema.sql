@@ -167,3 +167,29 @@ CREATE TABLE IF NOT EXISTS staff_locations (  -- latest known position per staff
   accuracy REAL,
   at       TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS care_plans (       -- recurring visit series; jobs are generated ahead
+  id          TEXT PRIMARY KEY,
+  patient_id  TEXT NOT NULL REFERENCES users(id),
+  service_id  TEXT NOT NULL REFERENCES services(id),
+  site_id     TEXT REFERENCES sites(id),
+  rule        TEXT NOT NULL,                    -- RRULE subset, see domain/recurrence.ts
+  start_date  TEXT NOT NULL,                    -- local calendar day, YYYY-MM-DD
+  time_of_day TEXT NOT NULL,                    -- local HH:MM
+  tz_offset_min INTEGER NOT NULL DEFAULT 330,
+  notes       TEXT NOT NULL DEFAULT '',
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_by  TEXT NOT NULL REFERENCES users(id),
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS plans_patient ON care_plans(patient_id);
+
+CREATE TABLE IF NOT EXISTS plan_exceptions (  -- one occurrence skipped or changed
+  plan_id     TEXT NOT NULL REFERENCES care_plans(id),
+  date        TEXT NOT NULL,                    -- the occurrence's original local day
+  action      TEXT NOT NULL CHECK (action IN ('skip','modify')),
+  time_of_day TEXT,                             -- modify: new local time
+  new_date    TEXT,                             -- modify: move to another local day
+  notes       TEXT,
+  PRIMARY KEY (plan_id, date)
+);
