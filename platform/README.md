@@ -23,6 +23,7 @@ Steadyline Care lets a care business take bookings, send caregivers and couriers
 
   Every message goes to an outbox first (the *Messages* tab), so you can see exactly what was sent and what failed. A failed send never blocks a booking. With no provider configured, messages are recorded but not sent.
 - **Live location and ETA.** While a caregiver or courier is on the way, their phone shares its location every 30 seconds, and only then. The patient sees "Arriving in about N min", and dispatchers see staff and open jobs on the *Map* tab (OpenStreetMap).
+- **Repeating care plans.** A patient (or dispatcher, by phone) sets up a daily or weekly visit series, for example every Monday and Thursday at 09:00. The rule is a strict RRULE subset (`FREQ=DAILY|WEEKLY`, `INTERVAL`, `BYDAY`, `COUNT` or `UNTIL`) in the patient's local time. Visits are generated two weeks ahead (on creation and hourly), each one booked and auto-dispatched like a normal booking. One occurrence can be skipped, restored or moved to another time without touching the rest; ending a plan cancels its upcoming visits. Deliveries are excluded because each needs its own code.
 - **Money.** Prices are in paise. A price change applies to new bookings only. Staff record payment at completion (cash, UPI, card, insurance). The board shows the amount collected and the on-time arrival rate.
 
 ## Run it on your computer (5 minutes)

@@ -1,5 +1,5 @@
 import { api, live, type Job, type User } from './api';
-import { badge, h, here, on, rupees, toast, when } from './dom';
+import { badge, h, here, localDay, on, rupees, toast, when } from './dom';
 
 interface Service {
   id: string;
@@ -29,6 +29,11 @@ export function patientView(root: HTMLElement, user: User): () => void {
   const vitals = h('section', { class: 'card', 'aria-labelledby': 'v-h' });
   const book = h('section', { class: 'card', 'aria-labelledby': 'n-h' });
   const profile = h('section', { class: 'card', 'aria-labelledby': 'p-h' });
+  const plans = h('section', {
+    class: 'card',
+    'aria-labelledby': 'cp-h',
+    'data-testid': 'care-plans',
+  });
 
   const refresh = async () => {
     const [jobs, obs, prof] = await Promise.all([
@@ -40,7 +45,161 @@ export function patientView(root: HTMLElement, user: User): () => void {
     drawVitals(obs);
     if (!profile.dataset['drawn']) drawProfile(prof);
     drawBook(prof);
+    void drawPlans();
   };
+
+  const DAY_CODES = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
+  const describeRule = (rule: string) => {
+    const m = new Map(rule.split(';').map((x) => x.split('=') as [string, string]));
+    const n = Number(m.get('INTERVAL') ?? 1);
+    if (m.get('FREQ') === 'DAILY') return n === 1 ? 'Every day' : `Every ${n} days`;
+    const days = (m.get('BYDAY') ?? '').split(',').join(', ');
+    return `${n === 1 ? 'Every week' : `Every ${n} weeks`}${days ? ` on ${days}` : ''}`;
+  };
+
+  async function drawPlans() {
+    const list = await api<any[]>('GET', '/api/care-plans');
+    const services = await api<Service[]>('GET', '/api/services');
+    const homeServices = services.filter((s) => s.kind === 'home_visit');
+
+    const cards = list
+      .filter((p) => p.active)
+      .map((p) =>
+        h(
+          'div',
+          { class: 'job', 'data-testid': 'care-plan' },
+          h('strong', {}, p.service_name),
+          h('p', { class: 'fine' }, `${describeRule(p.rule)} at ${p.time_of_day}`),
+          h(
+            'ul',
+            { class: 'plain' },
+            ...p.upcoming.slice(0, 4).map((u: any) =>
+              h(
+                'li',
+                {},
+                u.skipped
+                  ? h('s', {}, when(`${u.date}T12:00:00Z`).split(',')[0]!)
+                  : when(u.starts_at),
+                u.skipped ? ' skipped ' : u.modified ? ' (changed) ' : ' ',
+                on(
+                  h('button', { class: 'link', type: 'button' }, u.skipped ? 'Restore' : 'Skip'),
+                  'click',
+                  async () => {
+                    await api('POST', `/api/care-plans/${p.id}/occurrences/${u.date}`, {
+                      action: u.skipped ? 'restore' : 'skip',
+                    });
+                    toast(u.skipped ? 'Visit restored.' : 'Visit skipped.');
+                    void drawPlans();
+                  },
+                ),
+                u.skipped
+                  ? null
+                  : on(
+                      h('button', { class: 'link', type: 'button' }, 'Change time'),
+                      'click',
+                      async () => {
+                        const tm = prompt(
+                          'New time for this visit (HH:MM, 24-hour)',
+                          p.time_of_day,
+                        );
+                        if (!tm) return;
+                        await api('POST', `/api/care-plans/${p.id}/occurrences/${u.date}`, {
+                          action: 'modify',
+                          time_of_day: tm,
+                        });
+                        toast('Visit time changed.');
+                        void drawPlans();
+                      },
+                    ),
+              ),
+            ),
+          ),
+          on(
+            h('button', { class: 'btn ghost', type: 'button' }, 'End this plan'),
+            'click',
+            async () => {
+              if (!confirm('End this plan and cancel its upcoming visits?')) return;
+              const r = await api('POST', `/api/care-plans/${p.id}/end`);
+              toast(`Plan ended. ${r.cancelled_jobs} visits cancelled.`);
+              void drawPlans();
+            },
+          ),
+        ),
+      );
+
+    const svc = h(
+      'select',
+      { id: 'cp-svc', 'aria-label': 'Service' },
+      ...homeServices.map((s) => h('option', { value: s.id }, s.name)),
+    );
+    const freq = h(
+      'select',
+      { id: 'cp-freq', 'aria-label': 'Repeat' },
+      h('option', { value: 'DAILY' }, 'Every day'),
+      h('option', { value: 'WEEKLY', selected: true }, 'Every week'),
+    );
+    const days = DAY_CODES.map((d, i) =>
+      h(
+        'label',
+        { class: 'chk' },
+        h('input', {
+          type: 'checkbox',
+          value: d,
+          ...(i === new Date().getDay() - 1 ? { checked: true } : {}),
+        }),
+        d,
+      ),
+    );
+    const start = h('input', {
+      id: 'cp-start',
+      type: 'date',
+      value: localDay(new Date(Date.now() + 86_400_000)),
+    });
+    const tod = h('input', { id: 'cp-time', type: 'time', value: '09:00' });
+    const form = on(
+      h(
+        'form',
+        { class: 'stack', 'data-testid': 'care-plan-form' },
+        h('label', { for: 'cp-svc' }, 'Service'),
+        svc,
+        h('label', { for: 'cp-freq' }, 'Repeat'),
+        freq,
+        h('div', { class: 'row', role: 'group', 'aria-label': 'Weekdays (weekly only)' }, ...days),
+        h('label', { for: 'cp-start' }, 'Starting'),
+        start,
+        h('label', { for: 'cp-time' }, 'Time'),
+        tod,
+        h('button', { class: 'btn', type: 'submit' }, 'Start plan'),
+      ),
+      'submit',
+      async (e) => {
+        e.preventDefault();
+        const picked = days
+          .map((l) => l.querySelector('input')!)
+          .filter((i) => i.checked)
+          .map((i) => i.value);
+        if (freq.value === 'WEEKLY' && !picked.length)
+          throw new Error('Pick at least one weekday.');
+        const rule =
+          freq.value === 'DAILY' ? 'FREQ=DAILY' : `FREQ=WEEKLY;BYDAY=${picked.join(',')}`;
+        const r = await api('POST', '/api/care-plans', {
+          service_id: svc.value,
+          rule,
+          start_date: start.value,
+          time_of_day: tod.value,
+        });
+        toast(`Plan started. ${r.generated.created.length} visits scheduled.`);
+        void refresh();
+      },
+    );
+    plans.replaceChildren(
+      h('h2', { id: 'cp-h' }, 'Repeating visits'),
+      ...(cards.length ? cards : [h('p', { class: 'fine' }, 'No repeating plans yet.')]),
+      ...(homeServices.length
+        ? [h('details', {}, h('summary', {}, 'Set up a repeating visit'), form)]
+        : []),
+    );
+  }
 
   function drawBookings(jobs: Job[]) {
     const open = jobs.filter((j) => !['completed', 'cancelled', 'no_show'].includes(j.status));
@@ -384,7 +543,12 @@ export function patientView(root: HTMLElement, user: User): () => void {
       'div',
       { class: 'page' },
       h('h1', {}, `Hello, ${user.name.split(' ')[0]}`),
-      h('div', { class: 'cols' }, h('div', {}, book, profile), h('div', {}, bookings, vitals)),
+      h(
+        'div',
+        { class: 'cols' },
+        h('div', {}, book, plans, profile),
+        h('div', {}, bookings, vitals),
+      ),
     ),
   );
   void refresh();
