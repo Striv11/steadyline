@@ -43,3 +43,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** Fastify must keep the raw body for signature checks, so a custom JSON parser stores it. The PDF writer only handles Latin-1, so amounts print as "Rs".
 **Caveat:** Not run against the live Razorpay API (no credentials); the request and webhook shapes follow their documented payment-link API. UI changes are typechecked but not browser-tested, as before.
 **Next:** P5 dashboard link (FHIR Bundle export of visit readings); add e2e flows for care plans and payments.
+
+## 2026-11-03 (second entry): Steadyline Care P5 dashboard link, platform half
+
+**Changed:** `GET /api/me/export.fhir.json[?since=YYYY-MM-DD]` (patients only, audited) returns the patient's visit readings as a FHIR R4 Bundle (Patient plus Observations; LOINC and UCUM; BP as a systolic/diastolic panel). The patient app has a "Download for my dashboard" button under My readings. Docs in `platform/README.md`.
+**Tests:** 5 new, including a check that the Bundle passes the dashboard's own `validateBundle`, no other patient's data leaks, `since` filtering and bad input, role and audit checks, and incomplete BP rows being skipped.
+**Learned:** Platform ids use underscores, which FHIR ids reject, so they are sanitized. Date of birth lives in `patients`, not `users`.
+**Caveat:** P5 is only half done (marked `[~]`). The dashboard has no Bundle import UI (Day 13) or doctor-visit report (Day 12) yet, so "import" and "report includes them" are open. The download button is typechecked, not browser-tested.
+**Next:** Dashboard Day 2 (encrypted storage) is the long-standing gap; or P6 ops analytics.

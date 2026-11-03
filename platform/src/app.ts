@@ -25,6 +25,7 @@ import {
   type PaymentProvider,
 } from './payments.js';
 import { localDate, localToUtc, occurrences, parseRule, RuleError } from './domain/recurrence.js';
+import { buildExportBundle, type ExportPatient, type ObsRow } from './domain/fhir.js';
 import { assess, validateReading, VITALS, type VitalCode } from './domain/vitals.js';
 
 export interface AppOptions {
@@ -1522,6 +1523,32 @@ export function buildApp({
       id: j['id'],
     });
     return { ok: true };
+  });
+
+  /**
+   * A patient's own visit readings as a FHIR Bundle for the local-first dashboard.
+   * Optional ?since=YYYY-MM-DD limits the range. Patients only ever get their own data.
+   */
+  app.get('/api/me/export.fhir.json', { preHandler: roles('patient') }, async (req, reply) => {
+    const { since } = req.query as { since?: string };
+    if (since !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(since))
+      throw httpError(400, 'since must be YYYY-MM-DD');
+    const me = db
+      .prepare(
+        'SELECT u.id, u.name, p.date_of_birth FROM users u LEFT JOIN patients p ON p.user_id = u.id WHERE u.id = ?',
+      )
+      .get(req.user!.sub) as ExportPatient;
+    const rows = db
+      .prepare(
+        `SELECT id, code, value, value2, recorded_at FROM observations
+         WHERE patient_id = ? AND recorded_at >= ? ORDER BY recorded_at, id`,
+      )
+      .all(me.id, since ?? '') as ObsRow[];
+    audit(db, me.id, 'export_fhir', 'user', me.id, { since: since ?? null, count: rows.length });
+    return reply
+      .header('content-type', 'application/fhir+json')
+      .header('content-disposition', 'attachment; filename="steadyline-care-readings.fhir.json"')
+      .send(JSON.stringify(buildExportBundle(me, rows, now())));
   });
 
   /** Invoice while unpaid, receipt once paid. */

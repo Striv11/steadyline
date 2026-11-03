@@ -48,6 +48,10 @@ Open http://localhost:8787. The demo data includes two Pune clinics, a dispatche
 | Courier (Sagar)  | 9200000001 |
 | Patient (Sunita) | 9300000001 |
 
+## Taking readings to your private dashboard
+
+Patients can press **Download for my dashboard** under "My readings" (or `GET /api/me/export.fhir.json?since=YYYY-MM-DD`) to get their visit vitals as a FHIR R4 Bundle: one Patient plus Observations with LOINC and UCUM codes, BP as a systolic/diastolic panel. The file passes the local-first dashboard's own Bundle validator (tested). Only the signed-in patient's own data is returned, and each export is audited.
+
 ## Go live
 
 1. **Deploy.** The repo includes a Render blueprint (`render.yaml`): create a Render account, choose _New → Blueprint_, and pick this repository. It builds the Docker image and attaches a 1 GB persistent disk for the database (paid "Starter" instance, about $7/month plus disk). Any Docker host works the same way (`platform/Dockerfile`; keep `/data` on a persistent volume).

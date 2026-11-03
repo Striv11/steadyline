@@ -36,6 +36,8 @@ Next milestones for daily sessions (one per day, each with tests; keep `platform
 | P2  | Live location        | Staff phones post location while en_route (throttled); the patient sees the ETA; ops sees a Leaflet/OSM map of active staff and jobs                                                         | [x]    |
 | P3  | Recurring care plans | Weekly/daily visit series (RRULE subset) per patient, generated two weeks ahead, auto-dispatched; skip or modify one occurrence                                                              | [x]    |
 | P4  | Payments             | Razorpay payment links (provider interface plus a fake for tests), webhook signature verification, invoices and receipts as PDF                                                              | [x]    |
-| P5  | Dashboard link       | A patient can import visit readings from the platform into the local-first Steadyline dashboard (FHIR Bundle export endpoint); the doctor-visit report includes them                         | [ ]    |
+| P5  | Dashboard link       | A patient can import visit readings from the platform into the local-first Steadyline dashboard (FHIR Bundle export endpoint); the doctor-visit report includes them                         | [~]    |
 | P6  | Ops analytics        | Utilization per staff, revenue per service, cancellations and no-shows, response time to critical alerts; CSV export                                                                         | [ ]    |
 | P7  | Hardening            | Rate limiting on auth, password reset via OTP, session revocation, nightly backup script, Postgres option behind the same queries                                                            | [ ]    |
+
+_P5 status: the platform export endpoint and patient download are done; importing the file and the report section depend on the dashboard's Day 12-13 (report, Bundle import) and are still open._

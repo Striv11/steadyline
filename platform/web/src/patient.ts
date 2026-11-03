@@ -1,4 +1,4 @@
-import { api, ApiError, live, openPdf, type Job, type User } from './api';
+import { api, ApiError, downloadFile, live, openPdf, type Job, type User } from './api';
 import { badge, h, here, localDay, on, rupees, toast, when } from './dom';
 
 interface Service {
@@ -373,6 +373,23 @@ export function patientView(root: HTMLElement, user: User): () => void {
             );
           }),
         ),
+      ),
+      h(
+        'p',
+        { class: 'fine' },
+        'Take your readings to the private Steadyline dashboard: download them as a FHIR file and import it there. Nothing is shared with anyone.',
+      ),
+      on(
+        h(
+          'button',
+          { class: 'btn', type: 'button', 'data-testid': 'export-fhir' },
+          'Download for my dashboard',
+        ),
+        'click',
+        () =>
+          void downloadFile('/api/me/export.fhir.json', 'steadyline-care-readings.fhir.json').catch(
+            (e) => toast(String(e.message)),
+          ),
       ),
     );
   }

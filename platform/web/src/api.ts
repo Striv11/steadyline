@@ -88,3 +88,16 @@ export async function openPdf(path: string): Promise<void> {
   window.open(url, '_blank', 'noopener');
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+/** Fetch an authenticated file and save it through the browser. */
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const s = session.get();
+  const res = await fetch(path, { headers: s ? { authorization: `Bearer ${s.token}` } : {} });
+  if (!res.ok) throw new ApiError(res.status, 'could not download the file');
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
