@@ -17,6 +17,13 @@ import {
   type JobStatus,
   type Role,
 } from './domain/jobs.js';
+import {
+  invoicePdf,
+  parsePaidEvent,
+  paymentProviderFromEnv,
+  verifyWebhookSignature,
+  type PaymentProvider,
+} from './payments.js';
 import { localDate, localToUtc, occurrences, parseRule, RuleError } from './domain/recurrence.js';
 import { assess, validateReading, VITALS, type VitalCode } from './domain/vitals.js';
 
@@ -28,6 +35,10 @@ export interface AppOptions {
   publicDir?: string;
   /** Outbound messages; defaults to the provider configured in the environment. */
   notifier?: Notifier;
+  /** Online payment links; defaults to Razorpay when its keys are set, otherwise none. */
+  payments?: PaymentProvider | null;
+  /** Razorpay webhook secret; webhooks are rejected without it. */
+  webhookSecret?: string;
 }
 
 type Row = Record<string, unknown>;
@@ -47,10 +58,23 @@ export function buildApp({
   corsOrigin = true,
   publicDir,
   notifier: given,
+  payments: givenPayments,
+  webhookSecret = process.env['RAZORPAY_WEBHOOK_SECRET'] ?? '',
 }: AppOptions) {
+  const payments = givenPayments === undefined ? paymentProviderFromEnv() : givenPayments;
   const notifier = given ?? new Notifier(db, providerFromEnv());
   const app = Fastify({ logger: false, bodyLimit: 1_000_000 });
   void app.register(cors, { origin: corsOrigin });
+  // Webhook signatures cover the exact bytes received, so keep the raw body next to the parsed one.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    (req as FastifyRequest & { rawBody?: string }).rawBody = body as string;
+    if (body === '') return done(null, undefined);
+    try {
+      done(null, JSON.parse(body as string));
+    } catch {
+      done(Object.assign(new Error('invalid JSON'), { statusCode: 400 }), undefined);
+    }
+  });
   const listeners = new Map<Listener, Claims>();
 
   const publish = (type: string, data: { patient_id?: string; staff_id?: string | null } & Row) => {
@@ -1407,6 +1431,127 @@ export function buildApp({
     )['r'],
     on_time_rate: onTimeRate(db),
   }));
+
+  // ---------- payments ----------
+  const payerOf = (j: Row, who: Claims) => {
+    if (!(OPS.includes(who.role) || j['patient_id'] === who.sub))
+      throw httpError(404, 'job not found');
+  };
+  const invoiceNo = (j: Row) => 'INV-' + String(j['id']).slice(-8).toUpperCase();
+
+  app.post(
+    '/api/jobs/:id/payment-link',
+    { preHandler: roles('patient', 'ops', 'admin') },
+    async (req) => {
+      const j = getJob((req.params as Row)['id'] as string);
+      payerOf(j, req.user!);
+      if (!payments) throw httpError(501, 'online payments are not configured');
+      if (j['payment_status'] !== 'unpaid') throw httpError(409, 'this visit is already settled');
+      if (j['status'] === 'cancelled') throw httpError(409, 'this visit was cancelled');
+      const amount = Number(j['price_paise']);
+      if (amount <= 0) throw httpError(409, 'nothing to pay');
+      const open = db
+        .prepare(
+          "SELECT link_url, link_ref FROM payments WHERE job_id = ? AND status = 'created' AND provider = ? AND amount_paise = ?",
+        )
+        .get(j['id'], payments.name, amount) as Row | undefined;
+      if (open) return { url: open['link_url'], reused: true };
+      const svc = db.prepare('SELECT name FROM services WHERE id = ?').get(j['service_id']) as Row;
+      const patient = userBrief(j['patient_id'])!;
+      let link;
+      try {
+        link = await payments.createLink({
+          amountPaise: amount,
+          reference: String(j['id']),
+          description: `${svc['name']} on ${String(j['starts_at']).slice(0, 10)}`,
+          customer: { name: String(patient['name']), phone: String(patient['phone']) },
+        });
+      } catch (e) {
+        console.error('payment link failed', (e as Error).message);
+        throw httpError(502, 'the payment provider could not create a link; try again');
+      }
+      db.prepare(
+        "INSERT INTO payments (id, job_id, provider, link_ref, link_url, amount_paise, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'created', ?)",
+      ).run(id('pay'), j['id'], payments.name, link.ref, link.url, amount, now());
+      audit(db, req.user!.sub, 'payment_link', 'job', String(j['id']), { amount, ref: link.ref });
+      return { url: link.url, reused: false };
+    },
+  );
+
+  app.post('/api/webhooks/razorpay', async (req, reply) => {
+    const raw = (req as FastifyRequest & { rawBody?: string }).rawBody ?? '';
+    const sig = req.headers['x-razorpay-signature'];
+    if (!verifyWebhookSignature(raw, typeof sig === 'string' ? sig : undefined, webhookSecret))
+      return reply.status(401).send({ error: 'bad signature' });
+    const ev = parsePaidEvent(req.body);
+    if (!ev) return { ok: true, ignored: true };
+    const eventId = String(req.headers['x-razorpay-event-id'] ?? '') || null;
+    const p = db.prepare('SELECT * FROM payments WHERE link_ref = ?').get(ev.linkRef) as
+      Row | undefined;
+    if (!p) return { ok: true, ignored: true };
+    if (p['status'] === 'paid') return { ok: true, duplicate: true };
+    if (ev.amountPaise !== p['amount_paise'] || ev.reference !== p['job_id']) {
+      audit(db, null, 'payment_mismatch', 'job', String(p['job_id']), ev);
+      return reply.status(422).send({ error: 'amount or reference does not match the link' });
+    }
+    const method = ev.method === 'upi' || ev.method === 'card' ? ev.method : null;
+    const paidAt = now();
+    db.transaction(() => {
+      db.prepare(
+        "UPDATE payments SET status = 'paid', method = ?, payment_ref = ?, event_id = ?, receipt_no = ?, paid_at = ? WHERE id = ?",
+      ).run(
+        method ?? ev.method,
+        ev.paymentRef,
+        eventId,
+        'RCT-' + String(p['id']).slice(-8).toUpperCase(),
+        paidAt,
+        p['id'],
+      );
+      db.prepare(
+        "UPDATE jobs SET payment_status = 'paid', payment_method = COALESCE(?, payment_method, 'card'), updated_at = ? WHERE id = ? AND payment_status = 'unpaid'",
+      ).run(method, paidAt, p['job_id']);
+      audit(db, null, 'payment_received', 'job', String(p['job_id']), {
+        ref: ev.paymentRef,
+        amount: ev.amountPaise,
+      });
+    })();
+    const j = db.prepare('SELECT * FROM jobs WHERE id = ?').get(p['job_id']) as Row;
+    publish('job', {
+      patient_id: j['patient_id'] as string,
+      staff_id: j['staff_id'] as string | null,
+      id: j['id'],
+    });
+    return { ok: true };
+  });
+
+  /** Invoice while unpaid, receipt once paid. */
+  app.get('/api/jobs/:id/invoice.pdf', { preHandler: anyone }, async (req, reply) => {
+    const j = getJob((req.params as Row)['id'] as string);
+    if (!(OPS.includes(req.user!.role) || j['patient_id'] === req.user!.sub))
+      throw httpError(404, 'job not found');
+    const svc = db.prepare('SELECT name FROM services WHERE id = ?').get(j['service_id']) as Row;
+    const pay = db
+      .prepare("SELECT * FROM payments WHERE job_id = ? AND status = 'paid' ORDER BY paid_at DESC")
+      .get(j['id']) as Row | undefined;
+    const paid = j['payment_status'] === 'paid';
+    const waived = j['payment_status'] === 'waived';
+    const pdf = invoicePdf({
+      number: paid && pay ? String(pay['receipt_no']) : invoiceNo(j),
+      issuedAt: now(),
+      patient: String(userBrief(j['patient_id'])!['name']),
+      service: String(svc['name']),
+      serviceDate: String(j['starts_at']).slice(0, 10),
+      amountPaise: waived ? 0 : Number(j['price_paise']),
+      paid: paid || waived,
+      paidAt: pay ? String(pay['paid_at']) : String(j['updated_at']),
+      method: waived ? 'waiver' : String(pay?.['method'] ?? j['payment_method'] ?? ''),
+      reference: pay ? String(pay['payment_ref'] ?? '') : null,
+    });
+    return reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `inline; filename="${invoiceNo(j)}.pdf"`)
+      .send(pdf);
+  });
 
   // ---------- live updates ----------
   app.get('/api/events', { preHandler: anyone }, async (req, reply) => {

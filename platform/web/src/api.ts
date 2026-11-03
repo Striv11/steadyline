@@ -78,3 +78,13 @@ export function live(onChange: () => void): () => void {
   es.addEventListener('alert', bump);
   return () => es.close();
 }
+
+/** Fetch an authenticated PDF and open it in a new tab. */
+export async function openPdf(path: string): Promise<void> {
+  const s = session.get();
+  const res = await fetch(path, { headers: s ? { authorization: `Bearer ${s.token}` } : {} });
+  if (!res.ok) throw new ApiError(res.status, 'could not load the document');
+  const url = URL.createObjectURL(await res.blob());
+  window.open(url, '_blank', 'noopener');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

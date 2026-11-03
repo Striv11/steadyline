@@ -35,3 +35,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** A moved occurrence keeps its original date as the key, so the cancelled original is re-keyed (`date#old`) to let regeneration book the new slot and run dispatch normally. Generation failures (e.g. no address) are audited per date rather than aborting the plan.
 **Caveat:** The new patient UI was typechecked but not run in a browser here (Playwright browsers are not installed in this environment), so there is no e2e flow for it yet.
 **Next:** P4 payments (Razorpay payment links, webhook signature check, PDF receipts); add an e2e flow for care plans.
+
+## 2026-11-03: Steadyline Care P4 payments
+
+**Changed:** Added `payments.ts`: a payment-provider interface with Razorpay payment links (real) and a fake (tests), HMAC-SHA256 webhook signature verification over the raw body (constant-time compare, refused when no secret is configured), and a dependency-free one-page PDF writer for invoices and receipts. New `payments` table. Endpoints: `POST /api/jobs/:id/payment-link` (owner or ops, reuses an open link, refuses settled/cancelled visits, 501 when unconfigured), `POST /api/webhooks/razorpay` (idempotent, rejects amount/reference mismatches and audits them, marks the job paid in a transaction), `GET /api/jobs/:id/invoice.pdf` (invoice until paid, then receipt). The patient app gets "Pay online" and Invoice/Receipt buttons. Env vars added to README and `render.yaml`.
+**Tests:** 16 new: HMAC against the RFC 4231 vector, tampering, event parsing, Razorpay request format and errors, PDF structure (xref offsets verified) and escaping, and API flows for ownership, duplicate webhooks, mismatches and receipts.
+**Learned:** Fastify must keep the raw body for signature checks, so a custom JSON parser stores it. The PDF writer only handles Latin-1, so amounts print as "Rs".
+**Caveat:** Not run against the live Razorpay API (no credentials); the request and webhook shapes follow their documented payment-link API. UI changes are typechecked but not browser-tested, as before.
+**Next:** P5 dashboard link (FHIR Bundle export of visit readings); add e2e flows for care plans and payments.

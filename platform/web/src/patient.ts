@@ -1,4 +1,4 @@
-import { api, live, type Job, type User } from './api';
+import { api, ApiError, live, openPdf, type Job, type User } from './api';
 import { badge, h, here, localDay, on, rupees, toast, when } from './dom';
 
 interface Service {
@@ -217,6 +217,32 @@ export function patientView(root: HTMLElement, user: User): () => void {
             void refresh();
           }),
         );
+      if (j.status !== 'cancelled') {
+        const settled = j['payment_status'] !== 'unpaid';
+        if (!settled && j['price_paise'] > 0)
+          actions.append(
+            on(h('button', { class: 'btn', type: 'button' }, 'Pay online'), 'click', async () => {
+              try {
+                const r = await api<{ url: string }>('POST', `/api/jobs/${j.id}/payment-link`);
+                window.open(r.url, '_blank', 'noopener');
+              } catch (e) {
+                toast(
+                  (e as ApiError).status === 501
+                    ? 'Online payment is not available yet. Pay your caregiver directly.'
+                    : (e as Error).message,
+                );
+              }
+            }),
+          );
+        actions.append(
+          on(
+            h('button', { class: 'btn ghost', type: 'button' }, settled ? 'Receipt' : 'Invoice'),
+            'click',
+            () =>
+              void openPdf(`/api/jobs/${j.id}/invoice.pdf`).catch((e) => toast(String(e.message))),
+          ),
+        );
+      }
       if (j.status === 'completed' && !j['rating']) {
         for (let r = 5; r >= 1; r--)
           actions.append(

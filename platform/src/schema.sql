@@ -193,3 +193,21 @@ CREATE TABLE IF NOT EXISTS plan_exceptions (  -- one occurrence skipped or chang
   notes       TEXT,
   PRIMARY KEY (plan_id, date)
 );
+
+CREATE TABLE IF NOT EXISTS payments (         -- online payment attempts (payment links), one job may have several
+  id           TEXT PRIMARY KEY,
+  job_id       TEXT NOT NULL REFERENCES jobs(id),
+  provider     TEXT NOT NULL,
+  link_ref     TEXT NOT NULL,                   -- provider's payment link id
+  link_url     TEXT NOT NULL,
+  amount_paise INTEGER NOT NULL,
+  status       TEXT NOT NULL CHECK (status IN ('created','paid')),
+  method       TEXT,
+  payment_ref  TEXT,
+  event_id     TEXT,                            -- webhook event id, for idempotency
+  receipt_no   TEXT,
+  created_at   TEXT NOT NULL,
+  paid_at      TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS payments_link ON payments(provider, link_ref);
+CREATE INDEX IF NOT EXISTS payments_job ON payments(job_id);

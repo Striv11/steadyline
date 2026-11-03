@@ -2,13 +2,13 @@
 
 Steadyline Care lets a care business take bookings, send caregivers and couriers to patients' homes, run clinic appointments, and act on dangerous readings. It is one server that serves both the API and the web app. Everyone uses the same web app, and each person sees the screens for their role.
 
-| Role | What they do |
-|---|---|
-| **Patient** (self sign-up) | Book a home visit, clinic appointment or medicine delivery. See who is coming and when, track status live, get a delivery OTP, see visit notes and readings, rate the visit. |
-| **Caregiver** (nurse, physio, attendant, phlebotomist, doctor) | Phone view of their day: directions, a call button, allergies and conditions, notes. Start trip → arrived → begin → record vitals → complete (with notes and payment). |
-| **Courier** | Same day view for deliveries; hands over only when the patient's 6-digit OTP matches. |
-| **Dispatcher (ops)** | Live board with KPIs, the unstaffed queue (auto-assign, "why nobody?", manual assign), the schedule, the team, alerts, patient records, shifts, and phone bookings. |
-| **Admin** | Everything ops does, plus staff accounts, clinics, services and prices, and the audit log. |
+| Role                                                           | What they do                                                                                                                                                                 |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Patient** (self sign-up)                                     | Book a home visit, clinic appointment or medicine delivery. See who is coming and when, track status live, get a delivery OTP, see visit notes and readings, rate the visit. |
+| **Caregiver** (nurse, physio, attendant, phlebotomist, doctor) | Phone view of their day: directions, a call button, allergies and conditions, notes. Start trip → arrived → begin → record vitals → complete (with notes and payment).       |
+| **Courier**                                                    | Same day view for deliveries; hands over only when the patient's 6-digit OTP matches.                                                                                        |
+| **Dispatcher (ops)**                                           | Live board with KPIs, the unstaffed queue (auto-assign, "why nobody?", manual assign), the schedule, the team, alerts, patient records, shifts, and phone bookings.          |
+| **Admin**                                                      | Everything ops does, plus staff accounts, clinics, services and prices, and the audit log.                                                                                   |
 
 ## How it works
 
@@ -21,8 +21,9 @@ Steadyline Care lets a care business take bookings, send caregivers and couriers
   - **staff:** new job, job moved or cancelled;
   - **every dispatcher and admin:** a page for each **critical** reading.
 
-  Every message goes to an outbox first (the *Messages* tab), so you can see exactly what was sent and what failed. A failed send never blocks a booking. With no provider configured, messages are recorded but not sent.
-- **Live location and ETA.** While a caregiver or courier is on the way, their phone shares its location every 30 seconds, and only then. The patient sees "Arriving in about N min", and dispatchers see staff and open jobs on the *Map* tab (OpenStreetMap).
+  Every message goes to an outbox first (the _Messages_ tab), so you can see exactly what was sent and what failed. A failed send never blocks a booking. With no provider configured, messages are recorded but not sent.
+
+- **Live location and ETA.** While a caregiver or courier is on the way, their phone shares its location every 30 seconds, and only then. The patient sees "Arriving in about N min", and dispatchers see staff and open jobs on the _Map_ tab (OpenStreetMap).
 - **Repeating care plans.** A patient (or dispatcher, by phone) sets up a daily or weekly visit series, for example every Monday and Thursday at 09:00. The rule is a strict RRULE subset (`FREQ=DAILY|WEEKLY`, `INTERVAL`, `BYDAY`, `COUNT` or `UNTIL`) in the patient's local time. Visits are generated two weeks ahead (on creation and hourly), each one booked and auto-dispatched like a normal booking. One occurrence can be skipped, restored or moved to another time without touching the rest; ending a plan cancels its upcoming visits. Deliveries are excluded because each needs its own code.
 - **Money.** Prices are in paise. A price change applies to new bookings only. Staff record payment at completion (cash, UPI, card, insurance). The board shows the amount collected and the on-time arrival rate.
 
@@ -39,31 +40,33 @@ SEED_DEMO=1 npm start          # Windows PowerShell: $env:SEED_DEMO=1; npm start
 
 Open http://localhost:8787. The demo data includes two Pune clinics, a dispatcher, seven caregivers, two couriers, three patients and 14 days of shifts. Every demo password is `changeme123`.
 
-| Log in as | Phone |
-|---|---|
-| Admin | 9000000001 |
-| Dispatcher | 9000000002 |
-| Nurse (Anita) | 9100000001 |
-| Courier (Sagar) | 9200000001 |
+| Log in as        | Phone      |
+| ---------------- | ---------- |
+| Admin            | 9000000001 |
+| Dispatcher       | 9000000002 |
+| Nurse (Anita)    | 9100000001 |
+| Courier (Sagar)  | 9200000001 |
 | Patient (Sunita) | 9300000001 |
 
 ## Go live
 
-1. **Deploy.** The repo includes a Render blueprint (`render.yaml`): create a Render account, choose *New → Blueprint*, and pick this repository. It builds the Docker image and attaches a 1 GB persistent disk for the database (paid "Starter" instance, about $7/month plus disk). Any Docker host works the same way (`platform/Dockerfile`; keep `/data` on a persistent volume).
+1. **Deploy.** The repo includes a Render blueprint (`render.yaml`): create a Render account, choose _New → Blueprint_, and pick this repository. It builds the Docker image and attaches a 1 GB persistent disk for the database (paid "Starter" instance, about $7/month plus disk). Any Docker host works the same way (`platform/Dockerfile`; keep `/data` on a persistent volume).
 2. **Set environment variables on the host**, never in code:
    - `SESSION_SECRET`: 32+ random bytes (Render generates it).
    - `ADMIN_PHONE` and `ADMIN_PASSWORD` (12+ characters): on first start, the server creates this admin and the default service catalog.
    - SMS/WhatsApp via Twilio: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` (a Twilio number, or `whatsapp:+…` for an approved WhatsApp sender), and `NOTIFY_CHANNEL=sms|whatsapp`. In India, commercial SMS also requires DLT registration of your sender ID and templates through your provider.
+   - Online payments via Razorpay payment links: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`. In the Razorpay dashboard add a webhook to `https://<your-host>/api/webhooks/razorpay` for the `payment_link.paid` event, using the same secret. Without keys, the "Pay online" button says it is unavailable and cash/UPI at the door still works. Patients and ops can download an invoice (unpaid) or receipt (paid) PDF per visit.
    - optional: `CORS_ORIGIN` (default: allow all), `PORT` (default 8787).
 3. **First login as admin:**
-   - *Setup*: add your clinics, then adjust services and prices.
-   - *Staff*: create an account for each caregiver, courier and dispatcher, with their skills and home location (latitude/longitude), then add their shifts.
+   - _Setup_: add your clinics, then adjust services and prices.
+   - _Staff_: create an account for each caregiver, courier and dispatcher, with their skills and home location (latitude/longitude), then add their shifts.
    - Share the temporary passwords privately.
 4. **Back up the database daily.** It's a single SQLite file at `/data/care.db`. Use your host's disk snapshots, or stream it to cloud storage with Litestream.
 
 ## Before serving real patients (India)
 
 The software handles operations. These obligations are yours, and you should check them with a lawyer or compliance adviser:
+
 - **Data protection:** the Digital Personal Data Protection Act 2023 requires a privacy notice, consent (captured at sign-up), purpose limitation, breach notification and data-principal rights. The audit log helps with accountability.
 - **Clinical staff:** keep each caregiver's registration number (the "licence" field) and verify it with the state council.
 - **Medicine delivery:** deliveries must come from a licensed pharmacy under the Drugs and Cosmetics Act. Prescription medicines need a valid prescription; collect and check it.
