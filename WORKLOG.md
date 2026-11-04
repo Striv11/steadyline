@@ -51,3 +51,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** Platform ids use underscores, which FHIR ids reject, so they are sanitized. Date of birth lives in `patients`, not `users`.
 **Caveat:** P5 is only half done (marked `[~]`). The dashboard has no Bundle import UI (Day 13) or doctor-visit report (Day 12) yet, so "import" and "report includes them" are open. The download button is typechecked, not browser-tested.
 **Next:** Dashboard Day 2 (encrypted storage) is the long-standing gap; or P6 ops analytics.
+
+## 2026-11-04: Dashboard Day 2, encrypted local storage
+
+**Changed:** Added `src/storage/`: PBKDF2-SHA256 (600k iterations) yielding 64 bytes split into an AES-256-GCM key and an HMAC key; a `Vault` repository (put/get/delete/query/observations by code and time range) over a small `RawStore` interface, with `MemoryStore` and `IdbStore` implementations. Record keys are HMACs of `type/id`, and each ciphertext is bound to its slot via GCM additional data. A `#/vault` screen creates, unlocks and locks the vault.
+**Tests:** 10 unit tests: round trip, wrong passphrase, no plaintext (names, ids, types, codes) in the raw store, bit-flip tamper, record moved between slots, tampered KDF header, queries, overwrite/delete, lock, creation guards.
+**Learned:** Hiding types and ids behind an HMAC means queries decrypt every record of the vault; fine at this scale, and an encrypted index is the fix if it ever isn't.
+**Caveat:** `IdbStore` and the vault screen were not run in a browser (no Playwright browsers here), so Day 2 is `[~]`. Still open: raw-IndexedDB inspection e2e, typed queries beyond observations.
+**Next:** Day 3 onboarding and quick logging on top of the vault, plus an e2e for lock/unlock; or P6 ops analytics.

@@ -1,5 +1,6 @@
 import './ui/styles.css';
 import { demo, landing } from './ui/views';
+import { vaultView } from './ui/vault-view';
 
 const app = document.getElementById('app')!;
 
@@ -27,7 +28,13 @@ function toggleTheme() {
 }
 
 function render() {
-  app.replaceChildren(location.hash.startsWith('#/demo') ? demo() : landing());
+  app.replaceChildren(
+    location.hash.startsWith('#/demo')
+      ? demo()
+      : location.hash.startsWith('#/vault')
+        ? vaultView()
+        : landing(),
+  );
   document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
   window.scrollTo(0, 0);
 }

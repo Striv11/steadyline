@@ -366,3 +366,7 @@ main:focus {
     color: #000;
   }
 }
+.err {
+  color: var(--danger, #b3261e);
+  font-weight: 600;
+}

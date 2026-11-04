@@ -22,6 +22,7 @@ function nav(current: 'home' | 'demo'): HTMLElement {
       { 'aria-label': 'Main' },
       h('a', { href: '#/', ...(current === 'home' ? { 'aria-current': 'page' } : {}) }, 'Home'),
       h('a', { href: '#/demo', ...(current === 'demo' ? { 'aria-current': 'page' } : {}) }, 'Demo'),
+      h('a', { href: '#/vault' }, 'Vault'),
       h(
         'button',
         {
