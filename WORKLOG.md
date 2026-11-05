@@ -59,3 +59,12 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** Hiding types and ids behind an HMAC means queries decrypt every record of the vault; fine at this scale, and an encrypted index is the fix if it ever isn't.
 **Caveat:** `IdbStore` and the vault screen were not run in a browser (no Playwright browsers here), so Day 2 is `[~]`. Still open: raw-IndexedDB inspection e2e, typed queries beyond observations.
 **Next:** Day 3 onboarding and quick logging on top of the vault, plus an e2e for lock/unlock; or P6 ops analytics.
+
+## 2026-11-05: Steadyline Care P6 ops analytics
+
+**Changed:** `domain/analytics.ts` (pure): staff utilization, revenue per service, cancellation/no-show rates, critical-alert response (nearest-rank median and p90), and a CSV writer that defuses formula injection. `GET /api/ops/analytics` (ops/admin, UTC date window, JSON or per-report CSV, CSV exports audited) and an Analytics tab in the ops app. README updated.
+**Tests:** 9 new: percentile, utilization (cancelled excluded, no-shows included, no shifts gives null), waived/unpaid revenue, rate denominators, warnings ignored in alert stats, CSV quoting and formulas, plus API window filtering, CSV, audit, validation and role checks.
+**Learned:** Rates use only final-state visits so open bookings don't dilute them. Names come from staff-controlled data, hence the CSV formula guard.
+**Caveat:** The Analytics tab is typechecked, not browser-tested (no Playwright browsers here).
+**Also:** fixed a flaky vault test (a 2-character needle matched random base64 about 1 run in 20).
+**Next:** P7 hardening, or dashboard Day 3 onboarding/logging.

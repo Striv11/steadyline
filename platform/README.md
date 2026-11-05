@@ -27,6 +27,8 @@ Steadyline Care lets a care business take bookings, send caregivers and couriers
 - **Repeating care plans.** A patient (or dispatcher, by phone) sets up a daily or weekly visit series, for example every Monday and Thursday at 09:00. The rule is a strict RRULE subset (`FREQ=DAILY|WEEKLY`, `INTERVAL`, `BYDAY`, `COUNT` or `UNTIL`) in the patient's local time. Visits are generated two weeks ahead (on creation and hourly), each one booked and auto-dispatched like a normal booking. One occurrence can be skipped, restored or moved to another time without touching the rest; ending a plan cancels its upcoming visits. Deliveries are excluded because each needs its own code.
 - **Money.** Prices are in paise. A price change applies to new bookings only. Staff record payment at completion (cash, UPI, card, insurance). The board shows the amount collected and the on-time arrival rate.
 
+- **Analytics (ops/admin).** The _Analytics_ tab (`GET /api/ops/analytics?from&to`, UTC dates, default last 30 days) shows staff utilization (booked visit minutes over shift minutes; cancelled visits don't count, no-shows do), billed and collected revenue per service (completed visits; waived ones are not billed), cancellation and no-show rates over visits that reached a final state, and critical-alert response time (median and 90th percentile, plus how many are still unacknowledged). Each table exports as CSV (`&report=staff|services|alerts&format=csv`); exports are audited and cells that could be read as spreadsheet formulas are prefixed with `'`.
+
 ## Run it on your computer (5 minutes)
 
 Requires Node.js 20 or newer.

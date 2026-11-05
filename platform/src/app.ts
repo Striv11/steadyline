@@ -25,6 +25,16 @@ import {
   type PaymentProvider,
 } from './payments.js';
 import { localDate, localToUtc, occurrences, parseRule, RuleError } from './domain/recurrence.js';
+import {
+  alertResponse,
+  outcomes,
+  revenueByService,
+  staffUtilization,
+  toCsv,
+  type AlertRow,
+  type JobRow,
+  type ShiftRow,
+} from './domain/analytics.js';
 import { buildExportBundle, type ExportPatient, type ObsRow } from './domain/fhir.js';
 import { assess, validateReading, VITALS, type VitalCode } from './domain/vitals.js';
 
@@ -1133,6 +1143,96 @@ export function buildApp({
       jobs,
       staff: staff.map((s) => ({ ...s, skills: JSON.parse(String(s['skills'])) })),
     };
+  });
+
+  app.get('/api/ops/analytics', { preHandler: roles('ops', 'admin') }, async (req, reply) => {
+    const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+    const q = z
+      .object({
+        from: day.optional(),
+        to: day.optional(),
+        report: z.enum(['staff', 'services', 'alerts']).optional(),
+        format: z.enum(['json', 'csv']).default('json'),
+      })
+      .parse(req.query);
+    const to = q.to ?? new Date().toISOString().slice(0, 10);
+    const from = q.from ?? new Date(Date.parse(to) - 29 * 86400000).toISOString().slice(0, 10);
+    if (from > to) throw httpError(400, 'from must not be after to');
+    // Window is by UTC date, [from 00:00, to+1 00:00).
+    const lo = from + 'T00:00:00.000Z';
+    const hi = new Date(Date.parse(to) + 86400000).toISOString();
+    const jobs = db
+      .prepare(
+        `SELECT j.id, j.service_id, s.name AS service_name, j.staff_id, j.status, j.starts_at, j.ends_at,
+                j.price_paise, j.payment_status
+           FROM jobs j JOIN services s ON s.id = j.service_id
+          WHERE j.starts_at >= ? AND j.starts_at < ?`,
+      )
+      .all(lo, hi) as unknown as JobRow[];
+    const shifts = db
+      .prepare(
+        'SELECT staff_id, starts_at, ends_at FROM shifts WHERE starts_at >= ? AND starts_at < ?',
+      )
+      .all(lo, hi) as unknown as ShiftRow[];
+    const alertRows = db
+      .prepare(
+        'SELECT severity, created_at, acknowledged_at FROM alerts WHERE created_at >= ? AND created_at < ?',
+      )
+      .all(lo, hi) as unknown as AlertRow[];
+    const names = new Map(
+      (db.prepare('SELECT id, name FROM users').all() as Row[]).map((u) => [
+        String(u['id']),
+        String(u['name']),
+      ]),
+    );
+    const staff = staffUtilization(jobs, shifts).map((s) => ({
+      ...s,
+      name: names.get(s.staff_id) ?? s.staff_id,
+    }));
+    const services = revenueByService(jobs);
+    const result = {
+      from,
+      to,
+      staff,
+      services,
+      outcomes: outcomes(jobs),
+      alerts: alertResponse(alertRows),
+    };
+    if (q.format === 'json') return result;
+    if (!q.report) throw httpError(400, 'report is required for csv');
+    const csv =
+      q.report === 'staff'
+        ? toCsv(
+            ['staff_id', 'name', 'jobs', 'booked_minutes', 'shift_minutes', 'utilization'],
+            staff.map((s) => [
+              s.staff_id,
+              s.name,
+              s.jobs,
+              s.booked_minutes,
+              s.shift_minutes,
+              s.utilization,
+            ]),
+          )
+        : q.report === 'services'
+          ? toCsv(
+              ['service_id', 'service', 'completed', 'billed_inr', 'collected_inr'],
+              services.map((s) => [
+                s.service_id,
+                s.service_name,
+                s.completed,
+                (s.billed_paise / 100).toFixed(2),
+                (s.collected_paise / 100).toFixed(2),
+              ]),
+            )
+          : toCsv(
+              ['critical', 'acknowledged', 'unacknowledged', 'median_minutes', 'p90_minutes'],
+              [Object.values(result.alerts) as number[]],
+            );
+    audit(db, req.user!.sub, 'export_analytics', 'analytics', q.report, { from, to });
+    return reply
+      .header('content-type', 'text/csv; charset=utf-8')
+      .header('content-disposition', `attachment; filename="${q.report}-${from}_${to}.csv"`)
+      .send(csv);
   });
 
   app.get('/api/ops/alerts', { preHandler: roles('ops', 'admin') }, async (req) => {

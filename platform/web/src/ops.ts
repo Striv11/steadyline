@@ -1,5 +1,6 @@
 import { api, live, type Job, type User } from './api';
 import { badge, h, localDay, on, rupees, time, toast, when } from './dom';
+import { analyticsView } from './analytics';
 import { liveMap, messagesView } from './map';
 
 /** Dispatch board, alerts, roster, patients, admin. */
@@ -11,6 +12,7 @@ export function opsView(root: HTMLElement, user: User): () => void {
     'Patients',
     'Staff',
     'Messages',
+    'Analytics',
     ...(user.role === 'admin' ? ['Setup', 'Audit'] : []),
   ];
   let tab = 'Board';
@@ -63,6 +65,7 @@ export function opsView(root: HTMLElement, user: User): () => void {
     if (tab === 'Audit') body.replaceChildren(await auditView());
     if (tab === 'Map' && !body.querySelector('.map')) body.replaceChildren(await liveMap());
     if (tab === 'Messages') body.replaceChildren(await messagesView());
+    if (tab === 'Analytics') body.replaceChildren(await analyticsView());
     if (tab === 'Setup') body.replaceChildren(await setupView(refresh));
   };
   dayInput.addEventListener('change', () => void refresh());
