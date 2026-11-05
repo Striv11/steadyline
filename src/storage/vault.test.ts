@@ -40,9 +40,17 @@ describe('Vault', () => {
     const s = new MemoryStore();
     const v = await Vault.create(s, PASS, FAST);
     await v.put(patient);
-    await v.put(obs('o1', '2026-01-01T08:00:00Z'));
+    await v.put(obs('obs.glucose.7731', '2026-01-01T08:00:00Z'));
     const dump = JSON.stringify([...s.map.entries()]);
-    for (const needle of ['Asha', 'Verma', 'Patient', 'Observation', 'o1', '2339-0', 'mmol']) {
+    for (const needle of [
+      'Asha',
+      'Verma',
+      'Patient',
+      'Observation',
+      'obs.glucose.7731',
+      '2339-0',
+      'mmol',
+    ]) {
       expect(dump).not.toContain(needle);
     }
   });
