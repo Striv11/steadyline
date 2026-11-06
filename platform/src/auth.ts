@@ -27,6 +27,8 @@ export interface Claims {
   sub: string;
   role: Role;
   exp: number; // epoch seconds
+  /** Matches users.token_version; bumping that column revokes every earlier token. */
+  ver?: number;
 }
 
 const b64url = (b: Buffer | string) => Buffer.from(b).toString('base64url');

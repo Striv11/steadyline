@@ -38,8 +38,10 @@ Next milestones for daily sessions (one per day, each with tests; keep `platform
 | P4  | Payments             | Razorpay payment links (provider interface plus a fake for tests), webhook signature verification, invoices and receipts as PDF                                                              | [x]    |
 | P5  | Dashboard link       | A patient can import visit readings from the platform into the local-first Steadyline dashboard (FHIR Bundle export endpoint); the doctor-visit report includes them                         | [~]    |
 | P6  | Ops analytics        | Utilization per staff, revenue per service, cancellations and no-shows, response time to critical alerts; CSV export                                                                         | [x]    |
-| P7  | Hardening            | Rate limiting on auth, password reset via OTP, session revocation, nightly backup script, Postgres option behind the same queries                                                            | [ ]    |
+| P7  | Hardening            | Rate limiting on auth, password reset via OTP, session revocation, nightly backup script, Postgres option behind the same queries                                                            | [~]    |
 
 _P5 status: the platform export endpoint and patient download are done; importing the file and the report section depend on the dashboard's Day 12-13 (report, Bundle import) and are still open._
+
+_P7 status: rate limiting, OTP password reset and session revocation are done. Nightly backup script and the Postgres option are still open._
 
 _Day 2 status: crypto, vault repository and lock/unlock screen are done and unit-tested against an in-memory store. The IndexedDB adapter (`IdbStore`) and the UI are typechecked but not run in a browser here, so no e2e or raw-IndexedDB inspection yet._

@@ -68,3 +68,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Caveat:** The Analytics tab is typechecked, not browser-tested (no Playwright browsers here).
 **Also:** fixed a flaky vault test (a 2-character needle matched random base64 about 1 run in 20).
 **Next:** P7 hardening, or dashboard Day 3 onboarding/logging.
+
+## 2026-11-06: Steadyline Care P7 hardening (part 1: auth)
+
+**Changed:** Added an in-memory fixed-window `RateLimiter`: sign-in lockout per phone (5 failures/15 min, cleared by a successful login) and per address, reset-code requests per phone and address, registrations per address; 429 with `Retry-After`. Password reset by OTP (`/api/auth/reset/request` and `/confirm`): hashed single-use code, 15-minute expiry, 5 guesses, identical answer for unknown numbers. Session revocation via a `token_version` column checked on every request (`logout-all`, admin revoke, and every password reset). `TRUST_PROXY=1` so limits see real client addresses behind Render.
+**Tests:** 3 limiter unit tests and 13 API tests: lockout, recovery after success, per-address limit, registration limit, reset happy path with old session invalidated, enumeration-safe answers, code never in outbox/DB in clear, guess burn-out, expiry and supersession, disabled accounts, revocation by self and admin.
+**Learned:** The notification outbox is readable by ops, so it would have exposed reset codes; messages can now carry a `storedBody` that replaces the text in the outbox. A reset must also bump the token version, otherwise a hijacked session survives the password change.
+**Caveat:** Limits are per process (fine for one instance). No UI yet for "forgot password" in the web app, API only.
+**Next:** P7 remainder: nightly SQLite backup script and the Postgres option; forgot-password screen in the web app.

@@ -211,3 +211,13 @@ CREATE TABLE IF NOT EXISTS payments (         -- online payment attempts (paymen
 );
 CREATE UNIQUE INDEX IF NOT EXISTS payments_link ON payments(provider, link_ref);
 CREATE INDEX IF NOT EXISTS payments_job ON payments(job_id);
+
+CREATE TABLE IF NOT EXISTS password_resets (  -- one-time codes, stored hashed
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  code_hash  TEXT NOT NULL,
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  used       INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);

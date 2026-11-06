@@ -94,6 +94,8 @@ export interface Message {
   phone: string;
   template: string;
   body: string;
+  /** Stored in the outbox instead of `body` when the text contains a secret (e.g. a reset code). */
+  storedBody?: string;
 }
 
 /** Build the messages a job event should produce. Pure, so it is unit-tested directly. */
@@ -219,7 +221,7 @@ export class Notifier {
           m.userId,
           m.phone,
           m.template,
-          m.body,
+          m.storedBody ?? m.body,
           related.jobId ?? null,
           related.alertId ?? null,
           'queued',

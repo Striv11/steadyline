@@ -29,6 +29,11 @@ export function openDb(file = process.env['DB_FILE'] ?? 'care.db'): DB {
     db.exec('ALTER TABLE jobs ADD COLUMN plan_id TEXT REFERENCES care_plans(id)');
     db.exec('ALTER TABLE jobs ADD COLUMN plan_date TEXT');
   }
+  const userCols = (db.prepare('PRAGMA table_info(users)').all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  if (!userCols.includes('token_version'))
+    db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');
   db.exec('CREATE INDEX IF NOT EXISTS jobs_plan ON jobs(plan_id, plan_date)');
   return db;
 }

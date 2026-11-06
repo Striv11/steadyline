@@ -2,9 +2,18 @@ import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
-import { randomInt } from 'node:crypto';
+import { randomInt, timingSafeEqual } from 'node:crypto';
+import { RateLimiter } from './ratelimit.js';
 import { z, ZodError } from 'zod';
-import { hashPassword, signToken, verifyPassword, verifyToken, type Claims } from './auth.js';
+import {
+  hashOtp,
+  hashPassword,
+  newOtp,
+  signToken,
+  verifyPassword,
+  verifyToken,
+  type Claims,
+} from './auth.js';
 import { audit, id, now, type DB } from './db.js';
 import { rank, travelMinutes, type Candidate, type JobRequest } from './domain/dispatch.js';
 import { messagesFor, Notifier, providerFromEnv, type JobEvent } from './notify.js';
@@ -50,6 +59,14 @@ export interface AppOptions {
   payments?: PaymentProvider | null;
   /** Razorpay webhook secret; webhooks are rejected without it. */
   webhookSecret?: string;
+  /** Override auth rate limiters (tests). */
+  limiters?: Partial<{
+    login: RateLimiter;
+    loginIp: RateLimiter;
+    resetRequest: RateLimiter;
+    resetIp: RateLimiter;
+    register: RateLimiter;
+  }>;
 }
 
 type Row = Record<string, unknown>;
@@ -71,10 +88,16 @@ export function buildApp({
   notifier: given,
   payments: givenPayments,
   webhookSecret = process.env['RAZORPAY_WEBHOOK_SECRET'] ?? '',
+  limiters,
 }: AppOptions) {
   const payments = givenPayments === undefined ? paymentProviderFromEnv() : givenPayments;
   const notifier = given ?? new Notifier(db, providerFromEnv());
-  const app = Fastify({ logger: false, bodyLimit: 1_000_000 });
+  const app = Fastify({
+    logger: false,
+    bodyLimit: 1_000_000,
+    // Behind Render/nginx the client address is in X-Forwarded-For; only trust it when told to.
+    trustProxy: process.env['TRUST_PROXY'] === '1',
+  });
   void app.register(cors, { origin: corsOrigin });
   // Webhook signatures cover the exact bytes received, so keep the raw body next to the parsed one.
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
@@ -143,6 +166,8 @@ export function buildApp({
     if (err instanceof TransitionError)
       return reply.status(err.status).send({ error: err.message });
     const status = (err as { statusCode?: number }).statusCode ?? 500;
+    const retryAfter = (err as { retryAfter?: number }).retryAfter;
+    if (retryAfter) void reply.header('retry-after', String(retryAfter));
     if (status >= 500) console.error(err);
     return reply
       .status(status)
@@ -156,9 +181,12 @@ export function buildApp({
     const token = h?.startsWith('Bearer ') ? h.slice(7) : typeof q === 'string' ? q : null;
     const claims = token ? verifyToken(token, secret) : null;
     if (!claims) return reply.status(401).send({ error: 'sign in required' });
-    const u = db.prepare('SELECT active, role FROM users WHERE id = ?').get(claims.sub) as
-      Row | undefined;
+    const u = db
+      .prepare('SELECT active, role, token_version FROM users WHERE id = ?')
+      .get(claims.sub) as Row | undefined;
     if (!u || !u['active']) return reply.status(401).send({ error: 'account disabled' });
+    if ((claims.ver ?? 0) !== Number(u['token_version']))
+      return reply.status(401).send({ error: 'session ended, sign in again' });
     req.user = claims;
   };
   const roles =
@@ -194,6 +222,9 @@ export function buildApp({
         consent: z.literal(true),
       })
       .parse(req.body);
+    const regWait = registrations.blockedFor(req.ip);
+    if (regWait) throw tooMany(regWait);
+    registrations.hit(req.ip);
     if (db.prepare('SELECT 1 FROM users WHERE phone = ?').get(b.phone))
       throw httpError(409, 'that phone number is already registered');
     const uid = id('usr');
@@ -206,23 +237,150 @@ export function buildApp({
       audit(db, uid, 'register', 'user', uid);
     })();
     return {
-      token: signToken({ sub: uid, role: 'patient' }, secret),
+      token: signToken({ sub: uid, role: 'patient', ver: 0 }, secret),
       user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(uid) as Row),
     };
   });
 
+  const tooMany = (seconds: number) =>
+    Object.assign(new Error('too many attempts, try again later'), {
+      statusCode: 429,
+      retryAfter: seconds,
+    });
+  const failedLogins = limiters?.login ?? new RateLimiter(5, 15 * 60_000);
+  const failedLoginsByIp = limiters?.loginIp ?? new RateLimiter(50, 15 * 60_000);
+  const resetRequests = limiters?.resetRequest ?? new RateLimiter(3, 60 * 60_000);
+  const resetByIp = limiters?.resetIp ?? new RateLimiter(20, 60 * 60_000);
+  const registrations = limiters?.register ?? new RateLimiter(10, 60 * 60_000);
+
+  const sessionFor = (u: Row) => ({
+    token: signToken(
+      { sub: String(u['id']), role: u['role'] as Role, ver: Number(u['token_version'] ?? 0) },
+      secret,
+    ),
+    user: publicUser(u),
+  });
+
   app.post('/api/auth/login', async (req) => {
     const b = z.object({ phone: z.string(), password: z.string() }).parse(req.body);
+    const phoneKey = `p:${b.phone}`;
+    const ipKey = `i:${req.ip}`;
+    const wait = Math.max(failedLogins.blockedFor(phoneKey), failedLoginsByIp.blockedFor(ipKey));
+    if (wait) throw tooMany(wait);
     const u = db.prepare('SELECT * FROM users WHERE phone = ?').get(b.phone) as Row | undefined;
     if (!u || !u['active'] || !verifyPassword(b.password, String(u['password_hash']))) {
+      failedLogins.hit(phoneKey);
+      failedLoginsByIp.hit(ipKey);
       audit(db, null, 'login_failed', 'user', null, { phone: b.phone });
       throw httpError(401, 'wrong phone number or password');
     }
+    failedLogins.reset(phoneKey);
     audit(db, String(u['id']), 'login', 'user', String(u['id']));
-    return {
-      token: signToken({ sub: String(u['id']), role: u['role'] as Role }, secret),
-      user: publicUser(u),
+    return sessionFor(u);
+  });
+
+  /** End every session of the caller (all devices) and return a fresh token for this one. */
+  app.post('/api/auth/logout-all', { preHandler: anyone }, async (req) => {
+    db.prepare('UPDATE users SET token_version = token_version + 1 WHERE id = ?').run(
+      req.user!.sub,
+    );
+    audit(db, req.user!.sub, 'sessions_revoked', 'user', req.user!.sub);
+    return sessionFor(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.sub) as Row);
+  });
+
+  /** Admin: sign a user out everywhere (lost phone, leaver). */
+  app.post('/api/ops/users/:id/revoke-sessions', { preHandler: roles('admin') }, async (req) => {
+    const uid = String((req.params as Row)['id']);
+    const r = db
+      .prepare('UPDATE users SET token_version = token_version + 1 WHERE id = ?')
+      .run(uid);
+    if (!r.changes) throw httpError(404, 'user not found');
+    audit(db, req.user!.sub, 'sessions_revoked', 'user', uid, { by: 'admin' });
+    return { ok: true };
+  });
+
+  const RESET_TTL_MIN = 15;
+  const RESET_MAX_ATTEMPTS = 5;
+
+  /** Always answers the same way so it cannot be used to discover which numbers are registered. */
+  app.post('/api/auth/reset/request', async (req) => {
+    const b = z.object({ phone: z.string() }).parse(req.body);
+    const wait = Math.max(
+      resetRequests.blockedFor(`p:${b.phone}`),
+      resetByIp.blockedFor(`i:${req.ip}`),
+    );
+    if (wait) throw tooMany(wait);
+    resetRequests.hit(`p:${b.phone}`);
+    resetByIp.hit(`i:${req.ip}`);
+    const u = db.prepare('SELECT * FROM users WHERE phone = ? AND active = 1').get(b.phone) as
+      Row | undefined;
+    if (u) {
+      const otp = newOtp();
+      db.transaction(() => {
+        db.prepare('UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0').run(
+          u['id'],
+        );
+        db.prepare(
+          'INSERT INTO password_resets (id, user_id, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)',
+        ).run(
+          id('rst'),
+          u['id'],
+          otp.hash,
+          new Date(Date.now() + RESET_TTL_MIN * 60_000).toISOString(),
+          now(),
+        );
+        audit(db, String(u['id']), 'password_reset_requested', 'user', String(u['id']));
+      })();
+      notifier.enqueue([
+        {
+          userId: String(u['id']),
+          phone: String(u['phone']),
+          template: 'password_reset',
+          body: `Steadyline: your password reset code is ${otp.code}. It expires in ${RESET_TTL_MIN} minutes. Never share it.`,
+          storedBody: 'Steadyline: password reset code sent (code not stored).',
+        },
+      ]);
+    }
+    return { ok: true, message: 'If that number is registered, a code has been sent.' };
+  });
+
+  app.post('/api/auth/reset/confirm', async (req) => {
+    const b = z
+      .object({ phone: z.string(), code: z.string().regex(/^[0-9]{6}$/), password: Password })
+      .parse(req.body);
+    const wait = resetByIp.blockedFor(`c:${req.ip}`);
+    if (wait) throw tooMany(wait);
+    const bad = () => {
+      resetByIp.hit(`c:${req.ip}`);
+      return httpError(400, 'invalid or expired code');
     };
+    const u = db.prepare('SELECT * FROM users WHERE phone = ? AND active = 1').get(b.phone) as
+      Row | undefined;
+    if (!u) throw bad();
+    const r = db
+      .prepare(
+        'SELECT * FROM password_resets WHERE user_id = ? AND used = 0 ORDER BY created_at DESC LIMIT 1',
+      )
+      .get(u['id']) as Row | undefined;
+    if (!r || String(r['expires_at']) < now() || Number(r['attempts']) >= RESET_MAX_ATTEMPTS)
+      throw bad();
+    const given = Buffer.from(hashOtp(b.code));
+    const want = Buffer.from(String(r['code_hash']));
+    if (given.length !== want.length || !timingSafeEqual(given, want)) {
+      db.prepare('UPDATE password_resets SET attempts = attempts + 1 WHERE id = ?').run(r['id']);
+      audit(db, String(u['id']), 'password_reset_failed', 'user', String(u['id']));
+      throw bad();
+    }
+    db.transaction(() => {
+      db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(r['id']);
+      // Revokes every session, including any held by whoever prompted the reset.
+      db.prepare(
+        'UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?',
+      ).run(hashPassword(b.password), u['id']);
+      audit(db, String(u['id']), 'password_reset', 'user', String(u['id']));
+    })();
+    failedLogins.reset(`p:${b.phone}`);
+    return sessionFor(db.prepare('SELECT * FROM users WHERE id = ?').get(u['id']) as Row);
   });
 
   app.get('/api/me', { preHandler: anyone }, async (req) => {

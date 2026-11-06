@@ -9,6 +9,8 @@ services:
     plan: starter
     healthCheckPath: /api/health
     envVars:
+      - key: TRUST_PROXY
+        value: '1'
       - key: SESSION_SECRET
         generateValue: true
       - key: ADMIN_PHONE
