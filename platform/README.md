@@ -82,6 +82,16 @@ The software handles operations. These obligations are yours, and you should che
 - **Emergencies:** alerts reach your team, but they are not an emergency service. Have a written escalation protocol (who calls the patient, when to call 108) and train staff on it.
 - **Medical device rules:** don't claim diagnosis or dosing. The product flags readings for human review.
 
+## Backups
+
+SQLite snapshots use the online backup API, so they are consistent while the server is running. Each snapshot is verified with `PRAGMA integrity_check` before it appears, and only the newest 14 are kept.
+
+```sh
+npm run backup -- /var/backups/care 14   # one-off, or from cron (reads DB_FILE)
+```
+
+Or set `BACKUP_DIR` on the server to snapshot nightly at 21:00 UTC (02:30 IST); `BACKUP_KEEP` and `BACKUP_HOUR_UTC` tune it. Copy the folder off the machine too: a backup on the same disk does not survive losing the disk. The files contain patient data; protect them like the database. To restore, stop the server and copy a snapshot over `DB_FILE`.
+
 ## Development
 
 ```sh

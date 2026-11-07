@@ -76,3 +76,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** The notification outbox is readable by ops, so it would have exposed reset codes; messages can now carry a `storedBody` that replaces the text in the outbox. A reset must also bump the token version, otherwise a hijacked session survives the password change.
 **Caveat:** Limits are per process (fine for one instance). No UI yet for "forgot password" in the web app, API only.
 **Next:** P7 remainder: nightly SQLite backup script and the Postgres option; forgot-password screen in the web app.
+
+## 2026-11-07: Steadyline Care P7 hardening (part 2: backups)
+
+**Changed:** `platform/src/backup.ts`: online SQLite snapshots via the backup API, written to a `.partial` file, checked with `PRAGMA integrity_check`, then renamed; only the newest N (default 14) `care-<UTC stamp>.db` files are kept and other files in the folder are never touched. `npm run backup -- [dir] [keep]` for cron, and `BACKUP_DIR` (plus `BACKUP_KEEP`, `BACKUP_HOUR_UTC`) makes the server snapshot nightly at 21:00 UTC. README has a Backups section with restore steps.
+**Tests:** 4 new: snapshot is consistent and excludes later writes, retention and foreign-file safety, bad retention and failed backup leave no partial file, next-run arithmetic.
+**Learned:** `db.backup()` is async and safe during writes; verifying before the rename means a bad copy never looks valid.
+**Caveat:** The scheduler timer itself is not tested (only its arithmetic), and backups stay on the same disk unless copied off. No encryption of snapshots.
+**Next:** P7 remainder: Postgres option and a forgot-password screen; or dashboard Day 3.

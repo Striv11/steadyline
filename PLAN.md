@@ -42,6 +42,6 @@ Next milestones for daily sessions (one per day, each with tests; keep `platform
 
 _P5 status: the platform export endpoint and patient download are done; importing the file and the report section depend on the dashboard's Day 12-13 (report, Bundle import) and are still open._
 
-_P7 status: rate limiting, OTP password reset and session revocation are done. Nightly backup script and the Postgres option are still open._
+_P7 status: rate limiting, OTP password reset and session revocation are done. Nightly SQLite backup (verified snapshots, retention, in-process schedule) is done too. Only the Postgres option and a forgot-password screen are still open._
 
 _Day 2 status: crypto, vault repository and lock/unlock screen are done and unit-tested against an in-memory store. The IndexedDB adapter (`IdbStore`) and the UI are typechecked but not run in a browser here, so no e2e or raw-IndexedDB inspection yet._

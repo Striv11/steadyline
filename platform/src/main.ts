@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildApp } from './app.js';
 import { openDb } from './db.js';
+import { scheduleNightlyBackup } from './backup.js';
 import { bootstrap, demo } from './seed.js';
 
 const secret = process.env['SESSION_SECRET'];
@@ -35,3 +36,9 @@ const generate = () => {
 };
 setTimeout(generate, 5_000).unref();
 setInterval(generate, 60 * 60_000).unref();
+// Nightly snapshot of the database when BACKUP_DIR is set (see README, "Backups").
+if (process.env['BACKUP_DIR'])
+  scheduleNightlyBackup(db, process.env['BACKUP_DIR'], {
+    keep: Number(process.env['BACKUP_KEEP'] ?? 14),
+    hourUtc: Number(process.env['BACKUP_HOUR_UTC'] ?? 21),
+  });

@@ -9,6 +9,7 @@
     "start": "node dist/main.js",
     "build": "tsc -p tsconfig.json && vite build --config web/vite.config.ts",
     "seed": "tsx src/seed.ts",
+    "backup": "tsx src/backup-cli.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p web/tsconfig.json",
     "build:web": "vite build --config web/vite.config.ts",
