@@ -30,6 +30,7 @@ export function vaultView(): HTMLElement {
       const n = await open.count();
       form.replaceChildren(
         h('p', {}, `Unlocked. ${n} encrypted record${n === 1 ? '' : 's'} on this device.`),
+        h('a', { href: '#/log', class: 'btn' }, 'Open the log'),
         h('button', { type: 'submit', class: 'btn primary' }, 'Lock now'),
       );
       form.onsubmit = (e) => {

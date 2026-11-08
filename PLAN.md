@@ -45,3 +45,5 @@ _P5 status: the platform export endpoint and patient download are done; importin
 _P7 status: rate limiting, OTP password reset and session revocation are done. Nightly SQLite backup (verified snapshots, retention, in-process schedule) is done too. Only the Postgres option and a forgot-password screen are still open._
 
 _Day 2 status: crypto, vault repository and lock/unlock screen are done and unit-tested against an in-memory store. The IndexedDB adapter (`IdbStore`) and the UI are typechecked but not run in a browser here, so no e2e or raw-IndexedDB inspection yet._
+
+_Day 3 status: onboarding logic, the quick-add parser (all entry types, validated resources) and the `#/log` screen are done and the logic is unit-tested. The screen is typechecked but not run in a browser, so the e2e keystroke measurement and the Day 3 checkbox stay open._

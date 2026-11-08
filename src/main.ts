@@ -1,6 +1,7 @@
 import './ui/styles.css';
 import { demo, landing } from './ui/views';
 import { vaultView } from './ui/vault-view';
+import { logView } from './ui/log-view';
 
 const app = document.getElementById('app')!;
 
@@ -33,7 +34,9 @@ function render() {
       ? demo()
       : location.hash.startsWith('#/vault')
         ? vaultView()
-        : landing(),
+        : location.hash.startsWith('#/log')
+          ? logView()
+          : landing(),
   );
   document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
   window.scrollTo(0, 0);

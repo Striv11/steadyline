@@ -84,3 +84,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** `db.backup()` is async and safe during writes; verifying before the rename means a bad copy never looks valid.
 **Caveat:** The scheduler timer itself is not tested (only its arithmetic), and backups stay on the same disk unless copied off. No encryption of snapshots.
 **Next:** P7 remainder: Postgres option and a forgot-password screen; or dashboard Day 3.
+
+## 2026-11-08: Dashboard Day 3 (onboarding and quick-add logging, part 1)
+
+**Changed:** `src/logging/quickadd.ts` parses one line of shorthand (`g 112`, `bp 128/82`, `sym joint pain 3 left knee`, `med metformin missed`, sleep, mood, food, activity, trigger, note) into validated FHIR resources with clear errors for bad input. `src/logging/onboarding.ts` builds the Patient and deduplicated Conditions. `src/ui/log-view.ts` (`#/log`, linked from the unlocked vault) shows onboarding on first run, then a quick-add box (`/` focuses, Enter saves) that writes to the encrypted vault.
+**Tests:** 22 new in `src/logging/logging.test.ts`: every entry type validates, exact values, 18 rejected inputs, onboarding happy and error paths.
+**Learned:** The builders already covered most entry types, so the real work was unambiguous grammar: symptom names run up to the first number, and the rest is the body location.
+**Caveat:** The log screen is typechecked but not run in a browser, and there is no e2e yet, so the "under 5 s by keystroke count" criterion is unmeasured and Day 3 stays unticked.
+**Next:** e2e for onboarding + quick-add keystroke count, then Day 4 (templates, BP category and chart).
