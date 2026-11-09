@@ -1,5 +1,6 @@
 import { h } from './dom';
-import { glucoseChart, tirBar } from './charts';
+import { bpChart, glucoseChart, tirBar } from './charts';
+import { BP_LABELS, bpReadings, dailyBp, summarizeBp } from '../metrics/bp';
 import { generateSyntheticPatient } from '../sim/generator';
 import { computeGlucoseMetrics, TARGETS } from '../metrics/glucose';
 import { CONDITIONS } from '../domain/codes';
@@ -136,6 +137,8 @@ export function demo(): HTMLElement {
       h('span', { class: 'tv' }, value),
       h('span', { class: 'tn' }, note),
     );
+  const bpAll = bpReadings(p.resources.filter((r) => r.resourceType === 'Observation'));
+  const bp = summarizeBp(bpAll);
   const patient = p.resources.find((r) => r.resourceType === 'Patient');
   const name = patient && patient.resourceType === 'Patient' ? (patient.name?.[0]?.text ?? '') : '';
   return h(
@@ -176,6 +179,33 @@ export function demo(): HTMLElement {
           'Ranges and targets: Battelino et al., Diabetes Care 2019. GMI: Bergenstal et al., Diabetes Care 2018.',
         ),
       ),
+      ...(bp
+        ? [
+            h(
+              'section',
+              { 'aria-labelledby': 'bp' },
+              h('h2', { id: 'bp' }, 'Blood pressure'),
+              h(
+                'ul',
+                { class: 'tiles' },
+                tile(
+                  'Average',
+                  `${Math.round(bp.meanSys)}/${Math.round(bp.meanDia)}`,
+                  `mmHg · ${bp.n} readings`,
+                ),
+                tile('Average category', BP_LABELS[bp.category], 'ACC/AHA 2017'),
+                tile('Highest single reading', BP_LABELS[bp.worst], 'in this period'),
+                tile('Normal readings', `${bp.share.normal.toFixed(0)}%`, 'of all readings'),
+              ),
+              bpChart(dailyBp(bpAll), 'Blood pressure over the last 14 days'),
+              h(
+                'p',
+                { class: 'fine' },
+                'Categories: Whelton et al., 2017 ACC/AHA guideline. A category describes readings, it is not a diagnosis; discuss patterns with your care team.',
+              ),
+            ),
+          ]
+        : []),
       h(
         'section',
         { 'aria-labelledby': 'soon' },
@@ -183,7 +213,7 @@ export function demo(): HTMLElement {
         h(
           'p',
           { class: 'empty' },
-          'Blood pressure, adherence, symptom calendar, insights and the doctor-visit report arrive over the next days. See the roadmap in the README.',
+          'Adherence, symptom calendar, insights and the doctor-visit report arrive over the next days. See the roadmap in the README.',
         ),
       ),
     ),

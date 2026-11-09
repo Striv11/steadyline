@@ -92,3 +92,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** The builders already covered most entry types, so the real work was unambiguous grammar: symptom names run up to the first number, and the rest is the body location.
 **Caveat:** The log screen is typechecked but not run in a browser, and there is no e2e yet, so the "under 5 s by keystroke count" criterion is unmeasured and Day 3 stays unticked.
 **Next:** e2e for onboarding + quick-add keystroke count, then Day 4 (templates, BP category and chart).
+
+## 2026-11-09: Dashboard Day 4 (blood pressure metrics and panel)
+
+**Changed:** `src/metrics/bp.ts`: ACC/AHA 2017 classification (normal, elevated, stage 1, stage 2, crisis above 180/120, higher of the two numbers wins), extraction of BP panels from Observations, mean, per-category shares, worst reading, daily means. `bpChart` (solid systolic, dashed diastolic, 130/80 reference lines, category data table) and a Blood pressure section in the demo dashboard.
+**Tests:** table-driven threshold tests (15 boundary cases) plus extraction, malformed panels, summary and daily-average tests.
+**Learned:** The guideline's crisis cut-off is strictly above 180/120, so 180/120 is still stage 2; pinned by a test.
+**Caveat:** The chart is built and typechecked but not browser-tested. Per-condition quick-add templates (the other half of Day 4) are not done, so Day 4 is `[~]`.
+**Next:** Condition templates for quick-add, then the e2e for onboarding/logging once Playwright browsers are available.

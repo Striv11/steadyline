@@ -300,6 +300,14 @@ main:focus {
   stroke: var(--line);
   stroke-width: 1.4;
 }
+.chart .dashed {
+  stroke-dasharray: 6 4;
+}
+.chart .ref {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
 .chart .band {
   fill: var(--band);
 }

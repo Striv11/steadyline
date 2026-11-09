@@ -1,6 +1,7 @@
 import { h, s } from './dom';
 import { downsampleMinMax, type Point } from '../metrics/downsample';
 import type { GlucoseMetrics } from '../metrics/glucose';
+import { BP_LABELS, type BpDay } from '../metrics/bp';
 
 const W = 720;
 const H = 260;
@@ -108,4 +109,81 @@ export function tirBar(m: GlucoseMetrics): HTMLElement {
     ),
   );
   return h('div', {}, bar, legend);
+}
+
+/**
+ * Daily mean blood pressure: systolic (solid) and diastolic (dashed) lines with reference lines
+ * at 130 and 80 mmHg (ACC/AHA stage 1 thresholds), plus a data table with the category per day.
+ */
+export function bpChart(days: BpDay[], title: string): HTMLElement {
+  const yMin = 40;
+  const yMax = 200;
+  const n = days.length;
+  const x = (i: number) => PAD.l + (n > 1 ? i / (n - 1) : 0.5) * (W - PAD.l - PAD.r);
+  const y = (v: number) =>
+    PAD.t + (1 - (Math.min(Math.max(v, yMin), yMax) - yMin) / (yMax - yMin)) * (H - PAD.t - PAD.b);
+  const path = (get: (d: BpDay) => number) =>
+    days.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(get(d)).toFixed(1)}`).join('');
+  const refs = [80, 130];
+  const svg = s(
+    'svg',
+    { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': title, class: 'chart' },
+    ...[40, 80, 120, 130, 160, 200].map((v) =>
+      s('text', { x: PAD.l - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'axis' }, String(v)),
+    ),
+    ...refs.map((v) => s('line', { x1: PAD.l, x2: W - PAD.r, y1: y(v), y2: y(v), class: 'ref' })),
+    s('path', { d: path((d) => d.meanSys), class: 'line', fill: 'none' }),
+    s('path', { d: path((d) => d.meanDia), class: 'line dashed', fill: 'none' }),
+    ...(n
+      ? [
+          s('text', { x: PAD.l, y: H - 8, class: 'axis' }, days[0]!.day),
+          s(
+            'text',
+            { x: W - PAD.r, y: H - 8, 'text-anchor': 'end', class: 'axis' },
+            days[n - 1]!.day,
+          ),
+        ]
+      : []),
+  );
+  const table = h(
+    'details',
+    { class: 'datatable' },
+    h('summary', {}, 'View data table'),
+    h(
+      'table',
+      {},
+      h(
+        'caption',
+        {},
+        `${title}: daily mean blood pressure (mmHg), solid line systolic, dashed diastolic`,
+      ),
+      h(
+        'thead',
+        {},
+        h(
+          'tr',
+          {},
+          ...['Day', 'Readings', 'Systolic', 'Diastolic', 'Category'].map((c) =>
+            h('th', { scope: 'col' }, c),
+          ),
+        ),
+      ),
+      h(
+        'tbody',
+        {},
+        ...days.map((d) =>
+          h(
+            'tr',
+            {},
+            h('th', { scope: 'row' }, d.day),
+            h('td', {}, String(d.n)),
+            h('td', {}, String(Math.round(d.meanSys))),
+            h('td', {}, String(Math.round(d.meanDia))),
+            h('td', {}, BP_LABELS[d.category]),
+          ),
+        ),
+      ),
+    ),
+  );
+  return h('figure', { class: 'figure' }, svg, table);
 }

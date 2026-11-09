@@ -76,7 +76,7 @@ Open the live link (or `npm run dev`), click **Try the demo patient**. You get a
 | --------------------------------- | ------------------------------------------------------- |
 | TIR/TAR/TBR ranges, CV ≤36 %      | Battelino T et al., _Diabetes Care_ 2019;42:1593–1603   |
 | GMI = 3.31 + 0.02392 × mean mg/dL | Bergenstal RM et al., _Diabetes Care_ 2018;41:2275–2280 |
-| BP categories (planned)           | Whelton PK et al., 2017 ACC/AHA Hypertension Guideline  |
+| BP categories                     | Whelton PK et al., 2017 ACC/AHA Hypertension Guideline  |
 | Adherence as PDC (planned)        | Pharmacy Quality Alliance PDC specification             |
 
 LOINC/SNOMED codes are listed in `src/domain/codes.ts`; verify against the current LOINC release before any clinical use (the peak-flow code in particular is flagged for review).
