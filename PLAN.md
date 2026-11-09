@@ -46,6 +46,6 @@ _P7 status: rate limiting, OTP password reset and session revocation are done. N
 
 _Day 2 status: crypto, vault repository and lock/unlock screen are done and unit-tested against an in-memory store. The IndexedDB adapter (`IdbStore`) and the UI are typechecked but not run in a browser here, so no e2e or raw-IndexedDB inspection yet._
 
-_Day 4 status: ACC/AHA 2017 classification (table-driven tests on every threshold, crisis above 180/120), BP extraction from FHIR panels, averages, per-category shares, daily means and the demo BP panel with chart and data table are done. Per-condition quick-add templates are still open; the BP panel is typechecked and built, not browser-tested._
+_Day 4 status: ACC/AHA 2017 classification (table-driven tests on every threshold, crisis above 180/120), BP extraction from FHIR panels, averages, per-category shares, daily means and the demo BP panel with chart and data table are done. Per-condition quick-add templates are done too (suggestion chips on `#/log`, tests parse every example). The BP panel and chips are typechecked and built, not browser-tested, so the checkbox stays `[~]` until the e2e runs._
 
 _Day 3 status: onboarding logic, the quick-add parser (all entry types, validated resources) and the `#/log` screen are done and the logic is unit-tested. The screen is typechecked but not run in a browser, so the e2e keystroke measurement and the Day 3 checkbox stay open._

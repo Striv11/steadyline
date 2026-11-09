@@ -3,6 +3,8 @@ import { validateResource } from '../domain/validate';
 import type { Observation } from '../domain/fhir';
 import { onboard } from './onboarding';
 import { parseQuickAdd } from './quickadd';
+import { conditionKeys, templatesFor, TEMPLATE_CONDITION_KEYS } from './templates';
+import { CONDITIONS } from '../domain/codes';
 
 let n = 0;
 const ctx = { patientId: 'p1', at: '2026-11-08T08:00:00Z', newId: () => `id${++n}` };
@@ -95,5 +97,39 @@ describe('onboard', () => {
     expect(() =>
       onboard({ name: 'A', birthDate: '2999-01-01', conditionKeys: [] }, undefined, '2026-11-08'),
     ).toThrow(/future/);
+  });
+});
+
+describe('condition templates', () => {
+  it('every template example parses into valid resources', () => {
+    for (const t of templatesFor(Object.keys(CONDITIONS))) {
+      const r = parseQuickAdd(t.example, ctx);
+      expect(r.ok, `${t.label}: ${t.example}`).toBe(true);
+      expect(t.example.startsWith(t.line.trim())).toBe(true);
+    }
+  });
+
+  it('has templates for every supported condition', () => {
+    expect(TEMPLATE_CONDITION_KEYS.sort()).toEqual(Object.keys(CONDITIONS).sort());
+  });
+
+  it('suggests condition-specific entries first, deduplicated, then general ones', () => {
+    const labels = templatesFor(['t2d', 'htn']).map((t) => t.label);
+    expect(labels.slice(0, 3)).toEqual(['Glucose', 'Medication', 'Meal']);
+    expect(labels).toContain('Blood pressure');
+    expect(labels.filter((l) => l === 'Medication')).toHaveLength(1);
+    expect(labels.slice(-3)).toEqual(['Note', 'Sleep', 'Mood']);
+  });
+
+  it('falls back to general entries and ignores unknown keys', () => {
+    expect(templatesFor(['nope']).map((t) => t.label)).toEqual(['Note', 'Sleep', 'Mood']);
+  });
+
+  it('maps stored Condition resources back to keys', () => {
+    const { conditions } = onboard(
+      { name: 'A', conditionKeys: ['asthma', 'ra', 'asthma'] },
+      () => `c${++n}`,
+    );
+    expect(conditionKeys(conditions)).toEqual(['asthma', 'ra']);
   });
 });

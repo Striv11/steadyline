@@ -1,9 +1,10 @@
 import { h } from './dom';
 import { currentVault } from './vault-view';
 import { CONDITIONS } from '../domain/codes';
-import type { Patient } from '../domain/fhir';
+import type { Condition, Patient } from '../domain/fhir';
 import { onboard } from '../logging/onboarding';
 import { parseQuickAdd } from '../logging/quickadd';
+import { conditionKeys, templatesFor } from '../logging/templates';
 
 /** Onboarding (first run) and the quick-add log. Needs an unlocked vault. */
 export function logView(): HTMLElement {
@@ -22,7 +23,7 @@ export function logView(): HTMLElement {
     status.className = err ? 'err' : '';
   };
 
-  const renderLog = (patient: Patient) => {
+  const renderLog = (patient: Patient, conditions: Condition[]) => {
     const input = h('input', {
       id: 'qa',
       type: 'text',
@@ -30,12 +31,26 @@ export function logView(): HTMLElement {
       placeholder: 'g 112 · bp 128/82 · sym headache 6 · med metformin missed',
       'aria-describedby': 'qa-help',
     }) as HTMLInputElement;
+    const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Suggested entries' });
+    for (const t of templatesFor(conditionKeys(conditions))) {
+      const btn = h(
+        'button',
+        { type: 'button', class: 'btn', title: `e.g. ${t.example}` },
+        t.label,
+      );
+      btn.onclick = () => {
+        input.value = t.line;
+        input.focus();
+      };
+      chips.append(btn);
+    }
     const recent = h('ul', { 'aria-label': 'Recent entries' });
     const form = h(
       'form',
       { class: 'card', novalidate: true },
       h('label', { for: 'qa' }, 'Quick add'),
       input,
+      chips,
       h(
         'p',
         { id: 'qa-help', class: 'muted' },
@@ -104,7 +119,7 @@ export function logView(): HTMLElement {
           conditionKeys: boxes.filter((b) => b.box.checked).map((b) => b.c.key),
         });
         await vault.putMany([patient, ...conditions]);
-        renderLog(patient);
+        renderLog(patient, conditions);
       } catch (err) {
         say((err as Error).message, true);
       }
@@ -114,7 +129,7 @@ export function logView(): HTMLElement {
 
   void (async () => {
     const [patient] = await vault.query<Patient>('Patient');
-    if (patient) renderLog(patient);
+    if (patient) renderLog(patient, await vault.query<Condition>('Condition'));
     else renderOnboarding();
   })();
   return main;

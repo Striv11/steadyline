@@ -100,3 +100,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** The guideline's crisis cut-off is strictly above 180/120, so 180/120 is still stage 2; pinned by a test.
 **Caveat:** The chart is built and typechecked but not browser-tested. Per-condition quick-add templates (the other half of Day 4) are not done, so Day 4 is `[~]`.
 **Next:** Condition templates for quick-add, then the e2e for onboarding/logging once Playwright browsers are available.
+
+## 2026-11-09 (second session): Dashboard Day 4 (per-condition quick-add templates)
+
+**Changed:** `src/logging/templates.ts`: suggestions per condition (all 12 supported), deduplicated across conditions, general ones (note, sleep, mood) last; `conditionKeys` maps stored Condition SNOMED codes back to keys. `#/log` shows them as chips that prefill the quick-add box.
+**Tests:** 5 new: every template example parses into valid resources, every condition has templates, ordering and dedupe, unknown keys, key round trip.
+**Learned:** Templates prefill shorthand rather than adding a second input path, so validation stays in one parser.
+**Caveat:** Chips are typechecked, not browser-tested; Day 4 stays `[~]` and Day 3 unticked until the e2e can run.
+**Next:** e2e for onboarding, chips and keystroke count when Playwright browsers exist; otherwise Day 5 CSV importers.
