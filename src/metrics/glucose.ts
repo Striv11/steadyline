@@ -54,6 +54,11 @@ export function mgdlToMmol(mgdl: number): number {
   return mgdl / 18.016;
 }
 
+/** Convert mmol/L to mg/dL. */
+export function mmolToMgdl(mmol: number): number {
+  return mmol * 18.016;
+}
+
 /**
  * Compute consensus metrics from glucose values in mg/dL.
  * Bands: <54 | 54–69 | 70–180 | 181–250 | >250 (readings are compared as-is, so

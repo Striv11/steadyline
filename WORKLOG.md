@@ -108,3 +108,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** Templates prefill shorthand rather than adding a second input path, so validation stays in one parser.
 **Caveat:** Chips are typechecked, not browser-tested; Day 4 stays `[~]` and Day 3 unticked until the e2e can run.
 **Next:** e2e for onboarding, chips and keystroke count when Playwright browsers exist; otherwise Day 5 CSV importers.
+
+## 2026-11-10: Dashboard Day 5 (CGM CSV importers, part 1)
+
+**Changed:** `src/importers/csv.ts`: streaming RFC 4180 tokenizer over sync/async string chunks (quotes, escaped quotes, embedded newlines, CRLF, BOM, chunk-boundary safe). `src/importers/cgm.ts`: Dexcom Clarity and FreeStyle Libre detection (Libre preamble lines skipped), mg/dL or mmol/L, configurable UTC offset and day-first/month-first dates, plausibility window 20-800 mg/dL, a report with per-line errors (capped at 50, rest counted), ignored non-glucose rows, and dedupe within the file and against already-stored timestamps. Added `mmolToMgdl`.
+**Tests:** 10 new: tokenizer edge cases at every chunk size, timestamp parsing, both formats, re-import dedupe, unknown file, 100k rows streamed in small chunks.
+**Learned:** Exports carry no time zone, so the offset has to be an explicit option rather than a guess; Dexcom writes "Low"/"High" for out-of-range values, which are reported as errors instead of invented numbers.
+**Caveat:** Memory is constant for parsing, but a seen-timestamp set and the output samples grow with the data. No import UI and no Google Fit / Health Connect CSV yet, so Day 5 is `[~]`.
+**Next:** Google Fit / Health Connect CSV mapping and an import screen with a progress report; Apple Health after that.
