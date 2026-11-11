@@ -142,3 +142,56 @@ describe('importCgm: robustness', () => {
     expect(report.errors.length).toBe(50);
   });
 });
+
+describe('importVitals (Google Fit / Health Connect CSV)', () => {
+  const opts = { patientId: 'p1' };
+  it('maps columns to validated observations, ignoring unrelated ones', async () => {
+    const { importVitals } = await import('./vitals');
+    const csv =
+      'Date,Step count,Average heart rate (bpm),Average weight (lb),Systolic (mmHg),Diastolic (mmHg)\n' +
+      '2026-03-01,8000,72,176,128,82\n' +
+      '2026-03-02,5000,,,,\n';
+    const { observations, report } = await importVitals(gen(csv), opts);
+    expect(report.recognised).toBe(true);
+    expect(report.ignoredColumns).toEqual(['Step count']);
+    expect(observations).toHaveLength(3);
+    const weight = observations.find((o) => o.id.startsWith('imp-weight'))!;
+    expect(weight.valueQuantity!.value).toBeCloseTo(79.8, 1);
+    expect(observations.some((o) => o.id.startsWith('imp-bp'))).toBe(true);
+    expect(report.rowsRead).toBe(2);
+  });
+  it('reports bad rows by line and de-duplicates against stored keys', async () => {
+    const { importVitals, vitalKey } = await import('./vitals');
+    const t = Date.UTC(2026, 2, 1);
+    const csv =
+      'Date,Heart rate (bpm),Systolic (mmHg),Diastolic (mmHg)\n' +
+      '2026-03-01,70,,\n' + // duplicate of stored
+      '2026-03-02,900,,\n' + // out of range
+      'nonsense,70,,\n' +
+      '2026-03-04,,120,\n' + // half a BP
+      '2026-03-05,,80,120\n' + // inverted
+      '2026-03-06,61,,\n';
+    const { observations, report } = await importVitals(gen(csv), {
+      ...opts,
+      existing: new Set([vitalKey('heartRate', t)]),
+    });
+    expect(observations).toHaveLength(1);
+    expect(report.duplicates).toBe(1);
+    expect(report.errors.map((e) => e.line)).toEqual([3, 4, 5, 6]);
+  });
+  it('rejects unknown files and converts mmol/L and °F', async () => {
+    const { importVitals } = await import('./vitals');
+    const bad = await importVitals(gen('foo,bar\n1,2\n'), opts);
+    expect(bad.report.recognised).toBe(false);
+    expect(bad.report.errors).toHaveLength(1);
+    const ok = await importVitals(
+      gen('Time,Glucose (mmol/L),Temperature (°F)\n2026-03-01 08:00,5.5,98.6\n'),
+      opts,
+    );
+    const vals = Object.fromEntries(
+      ok.observations.map((o) => [o.id.split('-')[1], o.valueQuantity!.value]),
+    );
+    expect(vals['glucose']).toBeCloseTo(99.1, 1);
+    expect(vals['temperature']).toBeCloseTo(37, 1);
+  });
+});

@@ -116,3 +116,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** Exports carry no time zone, so the offset has to be an explicit option rather than a guess; Dexcom writes "Low"/"High" for out-of-range values, which are reported as errors instead of invented numbers.
 **Caveat:** Memory is constant for parsing, but a seen-timestamp set and the output samples grow with the data. No import UI and no Google Fit / Health Connect CSV yet, so Day 5 is `[~]`.
 **Next:** Google Fit / Health Connect CSV mapping and an import screen with a progress report; Apple Health after that.
+
+## 2026-11-11: Dashboard Day 5 (vitals CSV importer, part 2)
+
+**Changed:** `src/importers/vitals.ts`: streaming importer for Google Fit / Health Connect style wide CSVs. Columns are recognised by header name (heart rate, weight in kg or lb, SpO2, glucose in mg/dL or mmol/L, temperature in C or F, peak flow, systolic/diastolic), unrelated columns (steps, calories) are listed and ignored. Output is FHIR Observations (BP as a panel) that pass `validateResource`; dedupe within the file and against stored `vitalKey`s.
+**Tests:** 3 new: mapping and unit conversion, per-line errors (out of range, bad date, half or inverted BP) plus dedupe, unknown file.
+**Learned:** BP needs both columns on the same row; reporting a lone systolic is better than guessing.
+**Caveat:** Only daily/row-level values; no import UI yet and not tested against real Takeout files (headers are matched by pattern).
+**Next:** Import screen with progress report (Day 5 done), then Apple Health streaming XML (Day 6).

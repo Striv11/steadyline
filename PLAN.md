@@ -48,6 +48,6 @@ _Day 2 status: crypto, vault repository and lock/unlock screen are done and unit
 
 _Day 4 status: ACC/AHA 2017 classification (table-driven tests on every threshold, crisis above 180/120), BP extraction from FHIR panels, averages, per-category shares, daily means and the demo BP panel with chart and data table are done. Per-condition quick-add templates are done too (suggestion chips on `#/log`, tests parse every example). The BP panel and chips are typechecked and built, not browser-tested, so the checkbox stays `[~]` until the e2e runs._
 
-_Day 5 status: streaming CSV tokenizer and Dexcom Clarity / FreeStyle Libre CGM importers (format detection, mg/dL and mmol/L, line-numbered error report, dedupe within a file and against stored timestamps, 100k-row streaming test) are done. Google Fit / Health Connect CSV and the import UI are still open._
+_Day 5 status: streaming CSV tokenizer and Dexcom Clarity / FreeStyle Libre CGM importers (format detection, mg/dL and mmol/L, line-numbered error report, dedupe within a file and against stored timestamps, 100k-row streaming test) are done. Google Fit / Health Connect style vitals CSV (wide tables: heart rate, weight, BP, SpO₂, glucose, temperature; unit conversion, per-line errors, dedupe) is done too. Only the import UI is still open._
 
 _Day 3 status: onboarding logic, the quick-add parser (all entry types, validated resources) and the `#/log` screen are done and the logic is unit-tested. The screen is typechecked but not run in a browser, so the e2e keystroke measurement and the Day 3 checkbox stay open._
