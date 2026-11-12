@@ -124,3 +124,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** BP needs both columns on the same row; reporting a lone systolic is better than guessing.
 **Caveat:** Only daily/row-level values; no import UI yet and not tested against real Takeout files (headers are matched by pattern).
 **Next:** Import screen with progress report (Day 5 done), then Apple Health streaming XML (Day 6).
+
+## 2026-11-12: Dashboard Day 6 (Apple Health streaming importer)
+
+**Changed:** `src/importers/xml.ts`: a small SAX-style tokenizer over string chunks (skips Apple's inline DTD, comments and CDATA; quote-aware so `>` inside attribute values is safe; entity decoding; `decodeStream` for `file.stream()` bytes). `src/importers/applehealth.ts`: maps HealthKit heart rate, body mass (kg/lb/g), SpO2 (fraction to %), blood glucose (mg/dL, mmol), temperature (C/F), peak flow and paired systolic/diastolic records to LOINC Observations. Reports unmapped types by count, per-record errors, duplicates (same `vitalKey` as the CSV importers, so cross-format re-imports dedupe), truncation, cancellation (AbortSignal) and progress (characters read).
+**Tests:** 11 new in `applehealth.test.ts`: identical events at every chunk size, DTD/comment handling, entities, multi-byte split across byte chunks, unit conversion, BP pairing, 6 kinds of bad record, truncation, non-Health file, cancel + progress, 200k records streamed.
+**Learned:** Apple stores SpO2 as a fraction with unit "%", and glucose units look like `mmol<180.1559>/L`; both need explicit handling. Blood pressure arrives as two separate records inside a Correlation, so pairing by start time is simpler than tracking the element nesting.
+**Caveat:** Not run against a real multi-GB export; the pending-BP map and seen-key set grow with data. No import screen yet (progress bar/cancel button), so Day 6 is `[~]`.
+**Next:** A shared import screen (CSV + Apple Health) with progress and cancel, which closes Day 5 and Day 6; then Day 7 AGP chart.
