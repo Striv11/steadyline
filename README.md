@@ -94,7 +94,7 @@ See [PLAN.md](PLAN.md) for the 14-day arc.
 
 - [x] Day 1: scaffold, FHIR model + validation, synthetic patient, glucose metrics, landing + demo shell
 - [ ] Encrypted IndexedDB, onboarding, fast logging
-- [ ] Importers (CSV: Dexcom, Libre and Google Fit/Health Connect vitals done; Apple Health `export.xml` parser done, import UI open)
+- [ ] Importers (CSV: Dexcom, Libre and Google Fit/Health Connect vitals done; Apple Health `export.xml` parser done, shared import screen at `#/import` written, not yet browser-tested; CGM series storage open)
 - [ ] Dashboard panels (AGP, BP, PDC, symptom heatmap, flares)
 - [ ] Insights engine
 - [ ] Reminders/PWA, doctor report, caregiver mode

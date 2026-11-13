@@ -132,3 +132,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** Apple stores SpO2 as a fraction with unit "%", and glucose units look like `mmol<180.1559>/L`; both need explicit handling. Blood pressure arrives as two separate records inside a Correlation, so pairing by start time is simpler than tracking the element nesting.
 **Caveat:** Not run against a real multi-GB export; the pending-BP map and seen-key set grow with data. No import screen yet (progress bar/cancel button), so Day 6 is `[~]`.
 **Next:** A shared import screen (CSV + Apple Health) with progress and cancel, which closes Day 5 and Day 6; then Day 7 AGP chart.
+
+## 2026-11-13: Shared import screen (Day 5/6 UI)
+
+**Changed:** `src/importers/run.ts`: `sniff` classifies a file from its first 64 KB (Apple Health XML, Dexcom/Libre CGM CSV, otherwise vitals CSV; BOM safe), `runImport` runs the right streaming importer and returns one uniform outcome (counts, notes, line-numbered errors, cancelled flag), `storedKeys` turns vault Observations into dedupe keys. `src/ui/import-view.ts` + `#/import` route + link from the vault screen: file picker, UTC offset and date order, progress bar, cancel, report, explicit Save step.
+**Tests:** 8 new in `run.test.ts`: sniffing each kind (with BOM, empty, unrelated XML), CGM dedupe against stored keys, vitals ignored columns, Apple Health unmapped types, cancellation, unrecognised files, save-then-reimport dedupes to zero.
+**Learned:** The source is a factory (`() => chunks`) so sniffing reads a fresh stream instead of buffering a multi-GB file. With `exactOptionalPropertyTypes` the options need conditional spreads.
+**Caveat:** The screen is typechecked and built, not run in a browser. Parsed CGM samples are not saved: the vault holds FHIR resources only and there is no CGM store yet. Stored-key dedupe loads all Observations, which will not scale to very large vaults.
+**Next:** A CGM time-series store (needed by Day 7 AGP), then the AGP chart; browser e2e for log/import when Playwright browsers are available.
