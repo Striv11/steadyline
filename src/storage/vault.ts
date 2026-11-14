@@ -1,4 +1,5 @@
 import type { Observation, Resource } from '../domain/fhir';
+import type { GlucoseSample } from '../sim/generator';
 import {
   DEFAULT_ITERATIONS,
   DecryptError,
@@ -16,6 +17,8 @@ import type { RawStore } from './raw-store';
 const META_KEY = '__meta';
 const CHECK_TEXT = 'steadyline-vault-v1';
 const RES_PREFIX = 'r:';
+const CGM_PREFIX = 'c:';
+const DAY_MS = 86_400_000;
 
 interface Meta {
   v: 1;
@@ -150,6 +153,78 @@ export class Vault {
     return rows.sort((a, b) =>
       (a.effectiveDateTime ?? '').localeCompare(b.effectiveDateTime ?? ''),
     );
+  }
+
+  // ---- CGM time series -------------------------------------------------
+  // Stored as one encrypted blob per UTC day (`c:` prefix) holding [t, mg/dL]
+  // pairs sorted by time, instead of one record per reading.
+
+  private async cgmKey(day: number): Promise<string> {
+    return CGM_PREFIX + (await opaqueKey(this.k(), `cgm/${day}`));
+  }
+
+  private async readDay(day: number): Promise<GlucoseSample[]> {
+    const keys = this.k();
+    const key = await this.cgmKey(day);
+    const sealed = await this.store.get(key);
+    if (sealed === undefined) return [];
+    const pairs = JSON.parse(await open(keys, sealed, key)) as [number, number][];
+    return pairs.map(([t, mgdl]) => ({ t, mgdl }));
+  }
+
+  /**
+   * Merge samples into the series. Existing timestamps win (re-imports are
+   * idempotent). Returns how many samples were actually added.
+   */
+  async putCgm(samples: Iterable<GlucoseSample>): Promise<number> {
+    const keys = this.k();
+    const byDay = new Map<number, GlucoseSample[]>();
+    for (const s of samples) {
+      if (!Number.isFinite(s.t) || !Number.isFinite(s.mgdl)) continue;
+      const day = Math.floor(s.t / DAY_MS);
+      const list = byDay.get(day);
+      if (list) list.push(s);
+      else byDay.set(day, [s]);
+    }
+    let added = 0;
+    for (const [day, incoming] of byDay) {
+      const merged = new Map<number, number>();
+      for (const s of await this.readDay(day)) merged.set(s.t, s.mgdl);
+      const before = merged.size;
+      for (const s of incoming) if (!merged.has(s.t)) merged.set(s.t, s.mgdl);
+      if (merged.size === before) continue;
+      added += merged.size - before;
+      const pairs = [...merged].sort((a, b) => a[0] - b[0]);
+      const key = await this.cgmKey(day);
+      await this.store.put(key, await seal(keys, JSON.stringify(pairs), key));
+    }
+    return added;
+  }
+
+  /** Samples with from <= t < to (epoch ms), oldest first. */
+  async cgm(from = -Infinity, to = Infinity): Promise<GlucoseSample[]> {
+    const out: GlucoseSample[] = [];
+    if (from === -Infinity || to === Infinity) {
+      // Unbounded: scan every CGM blob.
+      const keys = this.k();
+      for (const key of await this.store.keys()) {
+        if (!key.startsWith(CGM_PREFIX)) continue;
+        const pairs = JSON.parse(await open(keys, (await this.store.get(key))!, key)) as [
+          number,
+          number,
+        ][];
+        for (const [t, mgdl] of pairs) if (t >= from && t < to) out.push({ t, mgdl });
+      }
+      return out.sort((a, b) => a.t - b.t);
+    }
+    for (let d = Math.floor(from / DAY_MS); d <= Math.floor((to - 1) / DAY_MS); d++) {
+      for (const s of await this.readDay(d)) if (s.t >= from && s.t < to) out.push(s);
+    }
+    return out;
+  }
+
+  async cgmCount(): Promise<number> {
+    return (await this.cgm()).length;
   }
 
   async count(): Promise<number> {

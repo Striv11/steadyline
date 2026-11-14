@@ -140,3 +140,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** The source is a factory (`() => chunks`) so sniffing reads a fresh stream instead of buffering a multi-GB file. With `exactOptionalPropertyTypes` the options need conditional spreads.
 **Caveat:** The screen is typechecked and built, not run in a browser. Parsed CGM samples are not saved: the vault holds FHIR resources only and there is no CGM store yet. Stored-key dedupe loads all Observations, which will not scale to very large vaults.
 **Next:** A CGM time-series store (needed by Day 7 AGP), then the AGP chart; browser e2e for log/import when Playwright browsers are available.
+
+## 2026-11-14: Encrypted CGM time-series store
+
+**Changed:** `Vault.putCgm / cgm(from,to) / cgmCount`: CGM samples are stored as one AES-GCM blob per UTC day (`c:` prefix, opaque HMAC key, AAD-bound to the key) instead of one record per reading. Merge is idempotent (existing timestamps win) and returns the number added; range queries read only the days they cover. The import screen now saves CGM samples and dedupes against stored timestamps (`glucose@t` keys), replacing the "not saved yet" notice.
+**Tests:** 4 new: multi-day merge/idempotence/range query, ciphertext-only and re-unlock with resource counts unaffected, tamper detection and locked vault, non-finite samples ignored.
+**Learned:** Day-sized blobs keep a year of 5-minute data at ~365 small records, so AGP range reads stay cheap, but each merge rewrites the day it touches.
+**Caveat:** Unbounded `cgm()` decrypts every day; the import dedupe loads all stored timestamps. Import screen still not browser-tested.
+**Next:** Day 7 AGP percentile chart reading from `vault.cgm`, plus the 1-year render benchmark.

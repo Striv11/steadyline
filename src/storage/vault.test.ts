@@ -128,3 +128,63 @@ describe('Vault', () => {
     await expect(Vault.create(s, PASS, FAST)).rejects.toThrow('already exists');
   });
 });
+
+describe('Vault CGM series', () => {
+  const day = 86_400_000;
+  const t0 = Date.UTC(2026, 0, 1);
+  const series = (n: number, start = t0) =>
+    Array.from({ length: n }, (_, i) => ({ t: start + i * 300_000, mgdl: 100 + (i % 50) }));
+
+  it('stores, merges idempotently and queries by range across days', async () => {
+    const v = await Vault.create(new MemoryStore(), PASS, FAST);
+    const s = series(800); // spans 3 UTC days (800 * 5 min = 2.8 days from midnight)
+    expect(await v.putCgm(s)).toBe(800);
+    expect(await v.putCgm(s)).toBe(0);
+    // overlapping batch adds only new points; existing values win
+    const more = [{ t: t0, mgdl: 999 }, ...series(10, t0 + 800 * 300_000)];
+    expect(await v.putCgm(more)).toBe(10);
+    expect(await v.cgmCount()).toBe(810);
+    const all = await v.cgm();
+    expect(all[0]).toEqual({ t: t0, mgdl: 100 });
+    expect(all.map((x) => x.t)).toEqual([...all.map((x) => x.t)].sort((a, b) => a - b));
+    const mid = await v.cgm(t0 + day, t0 + 2 * day);
+    expect(mid).toHaveLength(288);
+    expect(mid.every((x) => x.t >= t0 + day && x.t < t0 + 2 * day)).toBe(true);
+  });
+
+  it('is encrypted, survives re-unlock and does not disturb resource queries', async () => {
+    const s = new MemoryStore();
+    const v = await Vault.create(s, PASS, FAST);
+    await v.put(patient);
+    await v.putCgm(series(50));
+    expect(await v.count()).toBe(1);
+    expect(await v.query('Observation')).toEqual([]);
+    const raw = JSON.stringify([...s.map.entries()]);
+    expect(raw).not.toContain('"mgdl"');
+    const again = await Vault.unlock(s, PASS);
+    expect(await again.cgmCount()).toBe(50);
+  });
+
+  it('detects tampering and refuses when locked', async () => {
+    const s = new MemoryStore();
+    const v = await Vault.create(s, PASS, FAST);
+    await v.putCgm(series(5));
+    const [k] = [...s.map.keys()].filter((x) => x.startsWith('c:'));
+    const blob = s.map.get(k!)!;
+    s.map.set(k!, blob.slice(0, -4) + (blob.endsWith('AAAA') ? 'BBBB' : 'AAAA'));
+    await expect(v.cgm()).rejects.toBeInstanceOf(DecryptError);
+    v.lock();
+    await expect(v.putCgm(series(1))).rejects.toThrow('locked');
+  });
+
+  it('ignores non-finite samples', async () => {
+    const v = await Vault.create(new MemoryStore(), PASS, FAST);
+    expect(
+      await v.putCgm([
+        { t: NaN, mgdl: 100 },
+        { t: t0, mgdl: Infinity },
+        { t: t0, mgdl: 90 },
+      ]),
+    ).toBe(1);
+  });
+});

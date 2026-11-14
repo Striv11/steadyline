@@ -76,29 +76,20 @@ export function importView(): HTMLElement {
         o.errorsTruncated ? h('li', {}, `…and ${o.errorsTruncated} more`) : null,
       ),
     );
-    const save = h(
-      'button',
-      { type: 'button', class: 'btn' },
-      `Save ${o.observations.length} readings`,
-    );
-    save.hidden = o.observations.length === 0;
+    const total = o.observations.length + o.glucose.length;
+    const save = h('button', { type: 'button', class: 'btn' }, `Save ${total} readings`);
+    save.hidden = total === 0;
     save.onclick = async () => {
       save.setAttribute('disabled', '');
       await vault.putMany(pending!.observations);
-      say(`Saved ${pending!.observations.length} readings to your vault.`);
+      await vault.putCgm(pending!.glucose);
+      say(`Saved ${total} readings to your vault.`);
       result.replaceChildren();
     };
     const parts: (HTMLElement | null)[] = [
       h('h2', {}, o.kind ? KIND_LABEL[o.kind] : 'Unrecognised file'),
       list,
       o.errors.length + o.errorsTruncated ? errs : null,
-      o.kind === 'cgm'
-        ? h(
-            'p',
-            { class: 'muted' },
-            `${o.glucose.length} CGM samples parsed. Storing CGM series is not available yet, so they are not saved.`,
-          )
-        : null,
       save,
     ];
     result.replaceChildren(...parts.filter((p): p is HTMLElement => p !== null));
@@ -132,6 +123,7 @@ export function importView(): HTMLElement {
       patient ??= (await vault.query<Patient>('Patient'))[0];
       if (!patient) return say('Set up your profile on the Log screen first.', true);
       const existing = storedKeys(await vault.query<Observation>('Observation'));
+      for (const g of await vault.cgm()) existing.add(`glucose@${g.t}`);
       const o = await runImport(() => decodeStream(f.stream()), {
         patientId: patient.id,
         existingKeys: existing,
