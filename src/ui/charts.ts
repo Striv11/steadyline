@@ -1,6 +1,7 @@
 import { h, s } from './dom';
 import { downsampleMinMax, type Point } from '../metrics/downsample';
 import type { GlucoseMetrics } from '../metrics/glucose';
+import type { AgpBin } from '../metrics/agp';
 import { BP_LABELS, type BpDay } from '../metrics/bp';
 
 const W = 720;
@@ -180,6 +181,88 @@ export function bpChart(days: BpDay[], title: string): HTMLElement {
             h('td', {}, String(Math.round(d.meanSys))),
             h('td', {}, String(Math.round(d.meanDia))),
             h('td', {}, BP_LABELS[d.category]),
+          ),
+        ),
+      ),
+    ),
+  );
+  return h('figure', { class: 'figure' }, svg, table);
+}
+
+/** Pure geometry for the AGP chart so it can be tested and benchmarked without a DOM. */
+export function agpGeometry(bins: readonly AgpBin[], binMinutes: number) {
+  const x = (min: number) => PAD.l + (min / 1440) * (W - PAD.l - PAD.r);
+  const yMax = 350;
+  const y = (v: number) => PAD.t + (1 - Math.min(v, yMax) / yMax) * (H - PAD.t - PAD.b);
+  // Each bin is plotted at its centre.
+  const mid = (b: AgpBin) => x(b.minute + binMinutes / 2);
+  const pt = (b: AgpBin, k: 'p5' | 'p25' | 'p50' | 'p75' | 'p95') =>
+    `${mid(b).toFixed(1)},${y(b[k]).toFixed(1)}`;
+  const band = (lo: 'p5' | 'p25', hi: 'p95' | 'p75') =>
+    bins.length === 0
+      ? ''
+      : `M${bins.map((b) => pt(b, hi)).join('L')}L${[...bins]
+          .reverse()
+          .map((b) => pt(b, lo))
+          .join('L')}Z`;
+  const median = bins.length === 0 ? '' : `M${bins.map((b) => pt(b, 'p50')).join('L')}`;
+  return { x, y, outer: band('p5', 'p95'), inner: band('p25', 'p75'), median };
+}
+
+/** Ambulatory Glucose Profile: median, IQR and 5–95 % band by time of day, with a data table. */
+export function agpChart(bins: readonly AgpBin[], title: string, binMinutes = 30): HTMLElement {
+  const g = agpGeometry(bins, binMinutes);
+  const svg = s(
+    'svg',
+    { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': title, class: 'chart' },
+    s('rect', {
+      x: PAD.l,
+      y: g.y(180),
+      width: W - PAD.l - PAD.r,
+      height: g.y(70) - g.y(180),
+      class: 'band',
+    }),
+    ...[0, 70, 180, 250, 350].map((v) =>
+      s('text', { x: PAD.l - 6, y: g.y(v) + 4, 'text-anchor': 'end', class: 'axis' }, String(v)),
+    ),
+    ...[0, 6, 12, 18, 24].map((hr) =>
+      s(
+        'text',
+        { x: g.x(hr * 60), y: H - 8, 'text-anchor': hr === 24 ? 'end' : 'middle', class: 'axis' },
+        `${String(hr % 24).padStart(2, '0')}:00`,
+      ),
+    ),
+    s('path', { d: g.outer, class: 'agp-outer' }),
+    s('path', { d: g.inner, class: 'agp-inner' }),
+    s('path', { d: g.median, class: 'line', fill: 'none' }),
+  );
+  const hhmm = (m: number) =>
+    `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const th = (t: string) => h('th', { scope: 'col' }, t);
+  const table = h(
+    'details',
+    { class: 'datatable' },
+    h('summary', {}, 'View data table'),
+    h(
+      'table',
+      {},
+      h('caption', {}, `${title}: glucose percentiles by time of day (mg/dL)`),
+      h(
+        'thead',
+        {},
+        h('tr', {}, th('Time'), th('n'), th('5%'), th('25%'), th('Median'), th('75%'), th('95%')),
+      ),
+      h(
+        'tbody',
+        {},
+        ...bins.map((b) =>
+          h(
+            'tr',
+            {},
+            h('th', { scope: 'row' }, hhmm(b.minute)),
+            ...[b.n, b.p5, b.p25, b.p50, b.p75, b.p95].map((v) =>
+              h('td', {}, String(Math.round(v))),
+            ),
           ),
         ),
       ),

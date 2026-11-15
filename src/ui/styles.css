@@ -303,6 +303,14 @@ main:focus {
 .chart .dashed {
   stroke-dasharray: 6 4;
 }
+.chart .agp-outer {
+  fill: var(--line);
+  opacity: 0.15;
+}
+.chart .agp-inner {
+  fill: var(--line);
+  opacity: 0.3;
+}
 .chart .ref {
   stroke: var(--muted);
   stroke-width: 1;

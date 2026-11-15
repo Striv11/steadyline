@@ -148,3 +148,11 @@ Newest entries at the bottom. Each entry records what actually changed, what was
 **Learned:** Day-sized blobs keep a year of 5-minute data at ~365 small records, so AGP range reads stay cheap, but each merge rewrites the day it touches.
 **Caveat:** Unbounded `cgm()` decrypts every day; the import dedupe loads all stored timestamps. Import screen still not browser-tested.
 **Next:** Day 7 AGP percentile chart reading from `vault.cgm`, plus the 1-year render benchmark.
+
+## 2026-11-15: AGP percentile chart and performance benchmark (Day 7)
+
+**Changed:** `src/metrics/agp.ts`: `computeAgp` folds all days onto a 24 h clock and returns 5/25/50/75/95th percentiles per bin (default 30 min, configurable UTC offset, sparse bins dropped, linear-interpolation percentiles like PERCENTILE.INC); `splitByDay` for daily overlays. `agpChart` in `src/ui/charts.ts` (median line, IQR and 5-95 % bands, target band, data table) is on the demo dashboard; its geometry is a pure function so it is testable without a DOM.
+**Tests:** 8 new: percentile values, folding and exact bin percentiles, offsets incl. negative wrap, sparse/NaN/bad width, ordering on synthetic data, day splitting, plus a benchmark that profiles 525,600 minute-level points (a year) and lays out the chart in under 1 s (about 100 ms locally).
+**Learned:** Sorting a `Float64Array` per bin is much faster than sorting number arrays and keeps the budget with a wide margin. Bins use the sample's wall-clock minute, so a DST change inside the data would blur bins; a fixed offset is used for now.
+**Caveat:** Daily overlays are not drawn, the AGP is not fed from the vault yet (demo only), and nothing is browser-tested. The benchmark times compute and geometry, not SVG DOM creation (tests run in node).
+**Next:** Daily overlay view and vault-backed dashboard from `vault.cgm`; browser e2e for log/import/AGP once Playwright browsers are available.

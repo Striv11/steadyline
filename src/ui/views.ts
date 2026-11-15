@@ -1,5 +1,6 @@
 import { h } from './dom';
-import { bpChart, glucoseChart, tirBar } from './charts';
+import { computeAgp } from '../metrics/agp';
+import { agpChart, bpChart, glucoseChart, tirBar } from './charts';
 import { BP_LABELS, bpReadings, dailyBp, summarizeBp } from '../metrics/bp';
 import { generateSyntheticPatient } from '../sim/generator';
 import { computeGlucoseMetrics, TARGETS } from '../metrics/glucose';
@@ -173,6 +174,8 @@ export function demo(): HTMLElement {
         ),
         tirBar(m),
         glucoseChart(pts, 'Glucose over the last 14 days'),
+        h('h3', {}, 'Ambulatory glucose profile'),
+        agpChart(computeAgp(p.cgm), 'Glucose profile by time of day, last 14 days'),
         h(
           'p',
           { class: 'fine' },
